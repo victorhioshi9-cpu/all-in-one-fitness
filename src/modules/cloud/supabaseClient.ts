@@ -7,6 +7,8 @@
  * - Llama a `set_device_context` RPC antes del primer upsert para activar RLS.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import * as Application from "expo-application";   // namespace import (NO destructurar)
+import { Platform } from "react-native";
 import { getDeviceId, getCachedDeviceId } from "./deviceIdentity";
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -78,8 +80,6 @@ async function ensureDeviceContext(): Promise<void> {
  */
 export async function pingDevicePresence(): Promise<void> {
   const supabase = await getSupabase();
-  const { Application } = require("expo-application");
-  const { Platform } = require("react-native");
   await supabase.rpc("register_device", {
     p_device_id: getCachedDeviceId(),
     p_app_version: Application.nativeApplicationVersion ?? "0.0.0",
