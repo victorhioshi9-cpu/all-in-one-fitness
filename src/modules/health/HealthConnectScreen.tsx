@@ -99,13 +99,18 @@ export const HealthConnectScreen: React.FC = () => {
         <Row label="Estado">
           <Badge
             color={availability === "installed" ? colors.ok : colors.warning}
-            text={availability === "installed" ? "Instalado" : "No instalado"}
+            text={availability === "installed" ? "Instalado" : "No detectado"}
           />
         </Row>
         {availability !== "installed" && (
-          <Pressable style={styles.btnPrimary} onPress={openHealthConnectInPlayStore}>
-            <Text style={styles.btnPrimaryText}>Instalar desde Play Store</Text>
-          </Pressable>
+          <>
+            <Text style={styles.hint}>
+              Si ya tienes Health Connect instalado y sigue saliendo "No detectado", es probable que el módulo nativo necesite reinstalarse tras un rebuild. Toca abajo para abrir Play Store y verificar:
+            </Text>
+            <Pressable style={styles.btnPrimary} onPress={openHealthConnectInPlayStore}>
+              <Text style={styles.btnPrimaryText}>Abrir Health Connect en Play Store</Text>
+            </Pressable>
+          </>
         )}
         <Pressable style={styles.btnSecondary} onPress={openHealthConnectApp}>
           <Text style={styles.btnSecondaryText}>Abrir ajustes de Health Connect</Text>
