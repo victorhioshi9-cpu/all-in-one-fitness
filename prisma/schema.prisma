@@ -1,0 +1,158 @@
+// Prisma schema para backend/supabase (PostgreSQL) - espejo del SQLite local
+// Se usa en Fase 2/3 para el endpoint de sincronización.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Exercise {
+  id              String   @id @default(cuid())
+  name            String
+  category        String
+  primaryMuscle   String?
+  secondaryMuscles String?
+  poseConfig      Json?
+  isCustom        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  sets            Set[]
+  records         PersonalRecord[]
+  @@index([category])
+}
+
+model Workout {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  notes           String?
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationSec     Int?
+  totalVolumeKg   Float?
+  status          String   @default("in_progress")
+  exerciseOrder   Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  sets            Set[]
+  @@index([userId, startedAt(sort: Desc)])
+}
+
+model Set {
+  id              String   @id @default(cuid())
+  userId          String
+  workoutId       String
+  exerciseId      String
+  setIndex        Int
+  weightKg        Float    @default(0)
+  reps            Int      @default(0)
+  partialReps     Int      @default(0)
+  rpe             Float?
+  tempoSec        Json?
+  restSec         Int?
+  est1rmKg        Float?
+  volumeKg        Float?
+  poseSummary     Json?
+  videoPath       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  workout         Workout  @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  exercise        Exercise @relation(fields: [exerciseId], references: [id])
+  repEvents       RepEvent[]
+  @@index([workoutId, setIndex])
+  @@index([exerciseId, createdAt(sort: Desc)])
+}
+
+model RepEvent {
+  id              String   @id @default(cuid())
+  setId           String
+  repIndex        Int
+  eccentricMs     Int?
+  pauseMs         Int?
+  concentricMs    Int?
+  romDegrees      Float?
+  fullRom         Boolean  @default(true)
+  biomechanics    Json?
+  timestampMs     BigInt
+  set             Set      @relation(fields: [setId], references: [id], onDelete: Cascade)
+  @@index([setId, repIndex])
+}
+
+model BodyMetric {
+  id              String   @id @default(cuid())
+  userId          String
+  weightKg        Float?
+  bodyFatPct      Float?
+  muscleMassKg    Float?
+  chestCm         Float?
+  waistCm         Float?
+  hipCm           Float?
+  armCm           Float?
+  thighCm         Float?
+  notes           String?
+  source          String   @default("manual")
+  measuredAt      DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([userId, measuredAt(sort: Desc)])
+}
+
+model NutritionLog {
+  id              String   @id @default(cuid())
+  userId          String
+  day             String
+  mealName        String?
+  kcal            Float    @default(0)
+  proteinG        Float?
+  carbsG          Float?
+  fatG            Float?
+  fiberG          Float?
+  isSupplement    Boolean  @default(false)
+  loggedAt        DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([userId, day])
+}
+
+model HydrationLog {
+  id              String   @id @default(cuid())
+  userId          String
+  day             String
+  ml              Int
+  loggedAt        DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([userId, day])
+}
+
+model HealthConnectCache {
+  id              String   @id @default(cuid())
+  userId          String
+  metricType      String
+  day             String?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  value           Float?
+  unit            String?
+  sourceApp       String?
+  rawMeta         Json?
+  ingestedAt      DateTime @default(now())
+  @@unique([metricType, day, startedAt, sourceApp])
+  @@index([metricType, day])
+}
+
+model PersonalRecord {
+  id              String   @id @default(cuid())
+  userId          String
+  exerciseId      String
+  recordType      String
+  value           Float
+  achievedAt      DateTime
+  setId           String?
+  exercise        Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  @@index([userId, exerciseId, recordType])
+}
