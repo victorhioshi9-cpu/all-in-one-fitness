@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS nutrition_logs (
 CREATE INDEX IF NOT EXISTS idx_nutrition_day ON nutrition_logs(day);
 
 CREATE TABLE IF NOT EXISTS hydration_logs (
-  id              TEXT PRIMARY NULL,
+  id              TEXT PRIMARY KEY,
   day             TEXT NOT NULL,
   ml              INTEGER NOT NULL,
   logged_at       INTEGER NOT NULL,
