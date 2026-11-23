@@ -30,11 +30,11 @@ export function usePoseFrameProcessor(
   const fpsShared = useSharedValue(0);
 
   // Cola callable desde worklet -> hilo JS
-  const jsCallback = Worklets.createRunInJsContext((pose: PoseFrame) => {
+  const jsCallback = Worklets.createRunInJsFn((pose: PoseFrame) => {
     onPose(pose);
   });
 
-  const fpsTick = Worklets.createRunInJsContext((ms: number) => {
+  const fpsTick = Worklets.createRunInJsFn((ms: number) => {
     // FPS aproximado en el último segundo
     fpsShared.value = Math.round(1000 / Math.max(1, ms));
   });
