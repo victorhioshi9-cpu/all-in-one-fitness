@@ -1,12 +1,12 @@
 /**
- - App.tsx (Fase 3) - Entry point completo con protección de inicio.
+ * App.tsx (Fase 3) - Entry point completo con diagnóstico por paso.
  */
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
-import { StyleSheet, Linking, View, Text, ScrollView } from "react-native";
+import { StyleSheet, Linking, Text, ScrollView } from "react-native";
 
 import { RootNavigator } from "@/navigation/RootNavigator";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -36,7 +36,9 @@ class ScreenErrorBoundary extends React.Component<
       return (
         <ScrollView style={styles.errorBox}>
           <Text style={styles.errorTitle}>Error al iniciar la app:</Text>
-          <Text style={styles.errorMsg}>{this.state.error.message}</Text>
+          <Text style={styles.errorMsg}>
+            [Render] {this.state.error?.message || String(this.state.error)}
+          </Text>
         </ScrollView>
       );
     }
@@ -46,50 +48,34 @@ class ScreenErrorBoundary extends React.Component<
 
 export default function App() {
   const loadSettings = useSettingsStore((s) => s.loadFromStorage);
+  const [startupError, setStartupError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      try {
-        if (loadSettings) await loadSettings();
-      } catch (err) {
-        console.warn("[App] loadSettings falló:", err);
-      }
+      const steps: Array<[string, () => Promise<unknown> | unknown]> = [
+        ["loadSettings", () => loadSettings?.()],
+        ["openDatabase", () => openDatabase()],
+        ["initDeviceIdentity", () => initDeviceIdentity()],
+        [
+          "supabase",
+          async () => {
+            await getSupabase();
+            await pingDevicePresence();
+          },
+        ],
+        ["startSyncWorker", () => startSyncWorker()],
+        ["audioCoach", () => audioCoach?.setEnabled?.(true)],
+        ["widgetBridge", () => widgetBridge?.updateWidget?.()],
+      ];
 
-      try {
-        await openDatabase();
-      } catch (err) {
-        console.warn("[App] openDatabase falló:", err);
-      }
-
-      try {
-        await initDeviceIdentity();
-      } catch (err) {
-        console.warn("[App] initDeviceIdentity falló:", err);
-      }
-
-      try {
-        await getSupabase();
-        await pingDevicePresence();
-      } catch (err) {
-        console.warn("[App] Supabase no disponible, modo offline puro:", err);
-      }
-
-      try {
-        await startSyncWorker();
-      } catch (err) {
-        console.warn("[App] startSyncWorker falló:", err);
-      }
-
-      try {
-        audioCoach?.setEnabled?.(true);
-      } catch (err) {
-        console.warn("[App] audioCoach falló:", err);
-      }
-
-      try {
-        await widgetBridge?.updateWidget?.();
-      } catch (err) {
-        console.warn("[App] widgetBridge falló:", err);
+      for (const [name, fn] of steps) {
+        try {
+          await fn();
+        } catch (err: any) {
+          const msg = err?.message || String(err);
+          setStartupError(`[${name}] ${msg}`);
+          break;
+        }
       }
     })();
   }, [loadSettings]);
@@ -122,9 +108,18 @@ export default function App() {
       card: colors.bg,
       text: colors.bright,
       border: colors.dim,
-      primary: colors.accent
-    }
+      primary: colors.accent,
+    },
   };
+
+  if (startupError) {
+    return (
+      <ScrollView style={styles.errorBox}>
+        <Text style={styles.errorTitle}>Error al iniciar la app:</Text>
+        <Text style={styles.errorMsg}>{startupError}</Text>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScreenErrorBoundary>
@@ -161,5 +156,5 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   errorBox: { flex: 1, padding: 20, backgroundColor: "#111" },
   errorTitle: { color: "#ff5555", fontWeight: "bold", fontSize: 18, marginBottom: 10 },
-  errorMsg: { color: "#fff", fontSize: 14 }
+  errorMsg: { color: "#fff", fontSize: 14 },
 });
