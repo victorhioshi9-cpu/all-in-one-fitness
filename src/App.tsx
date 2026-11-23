@@ -1,5 +1,10 @@
 /**
  * App.tsx (Fase 3) - Entry point completo con diagnóstico por paso.
+ *
+ * CAMBIO: el loop de startup distingue pasos críticos (que bloquean el
+ * arranque si fallan) de pasos best-effort (que solo loguean y continúan).
+ * Antes, un fallo en supabase/widgetBridge/audioCoach rompía el loop
+ * con break y la app quedaba en pantalla de error.
  */
 import React, { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
@@ -17,6 +22,14 @@ import { startSyncWorker } from "@/modules/sync/syncWorker";
 import { audioCoach } from "@/modules/audioCoach/audioCoach";
 import { widgetBridge } from "@/modules/widget/widgetBridge";
 import { colors } from "@/theme/colors";
+
+// Pasos cuyo fallo NO debe bloquear el arranque de la UI.
+const BEST_EFFORT_STEPS = new Set([
+  "supabase",
+  "startSyncWorker",
+  "audioCoach",
+  "widgetBridge"
+]);
 
 class ScreenErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -73,8 +86,14 @@ export default function App() {
           await fn();
         } catch (err: any) {
           const msg = err?.message || String(err);
+          if (BEST_EFFORT_STEPS.has(name)) {
+            // No bloqueamos: la app puede seguir sin este paso.
+            console.warn(`[App] paso best-effort falló [${name}]: ${msg}`);
+            continue;
+          }
+          // Paso crítico: bloqueamos y mostramos error.
           setStartupError(`[${name}] ${msg}`);
-          break;
+          return;
         }
       }
     })();
