@@ -49,7 +49,7 @@ export const BarcodeScannerScreen: React.FC<{ onClose: () => void }> = ({ onClos
     }
   }, []);
 
-  const onBarcodes = Worklets.createRunInJsContext((codes: string[]) => {
+  const onBarcodes = Worklets.createRunInJsFn((codes: string[]) => {
     if (codes.length > 0) {
       const first = codes[0];
       setBarcode((prev) => {
