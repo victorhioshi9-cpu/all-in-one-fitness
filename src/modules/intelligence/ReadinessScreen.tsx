@@ -71,6 +71,17 @@ export const ReadinessScreen: React.FC = () => {
     );
   }
 
+  if (!ready) {
+    return (
+      <View style={styles.center}>
+        <Text style={{ color: colors.bright, fontSize: 22, fontWeight: "800", marginBottom: spacing.md }}>Sin datos todavía</Text>
+        <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: "center", paddingHorizontal: spacing.xl, lineHeight: 20 }}>
+          Para calcular tu readiness necesitas:{"\n\n"}• Datos de sueño de Health Connect{"\n"}• Frecuencia cardíaca en reposo{"\n"}• Al menos 1 entreno registrado{"\n\n"}Concede permisos en la pestaña Salud y registra tu primer entreno en la pestaña Entrenos.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.scroll}
