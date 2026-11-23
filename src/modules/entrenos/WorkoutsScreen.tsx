@@ -119,7 +119,15 @@ export const WorkoutsScreen: React.FC = () => {
 
       {/* Historial */}
       <Text style={styles.cardTitle}>Historial</Text>
-      {workouts.length === 0 && <Text style={styles.empty}>Sin entrenos registrados todavía</Text>}
+      {workouts.length === 0 && (
+        <View style={{ backgroundColor: colors.bgCard, borderRadius: radius.lg, padding: spacing.xl, alignItems: "center", borderWidth: 1, borderColor: colors.dim, marginBottom: spacing.lg }}>
+          <Text style={{ fontSize: 40, marginBottom: spacing.md }}>🏋️</Text>
+          <Text style={{ color: colors.bright, fontSize: 18, fontWeight: "800", marginBottom: spacing.xs }}>Sin entrenos aún</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 13, textAlign: "center", lineHeight: 19 }}>
+            Ve a la pestaña Coach para iniciar tu primera sesión con seguimiento de postura, o usa el cronómetro HIIT aquí abajo.
+          </Text>
+        </View>
+      )}
       <FlatList
         data={workouts}
         scrollEnabled={false}
