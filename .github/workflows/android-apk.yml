@@ -24,8 +24,30 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Install dependencies and apply patches
-        run: npm install
+      - name: Install dependencies without postinstall
+        run: npm install --ignore-scripts
+
+      - name: Fix PermissionsService.kt and regenerate patch
+        run: |
+          node -e '
+          const fs = require("fs");
+          const target = "node_modules/expo-modules-core/android/src/main/java/expo/modules/adapters/react/permissions/PermissionsService.kt";
+          if (!fs.existsSync(target)) {
+            console.error("No existe:", target);
+            process.exit(1);
+          }
+          let content = fs.readFileSync(target, "utf8");
+          content = content.replace(/\r\n/g, "\n");
+          if (!content.includes("grantResults.isNotEmpty()")) {
+            content = content.replace(
+              "grantResults[index] == PackageManager.PERMISSION_GRANTED",
+              "index < grantResults.size && grantResults[index] == PackageManager.PERMISSION_GRANTED"
+            );
+          }
+          fs.writeFileSync(target, content, "utf8");
+          '
+          rm -rf patches
+          npx patch-package expo-modules-core
 
       - name: Ensure android project exists
         run: |
