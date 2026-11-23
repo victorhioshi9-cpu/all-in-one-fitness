@@ -3,15 +3,9 @@
  * ----------------------------------------------------------------------------
  * Drena `sync_queue` (SQLite local) hacia Supabase. Upload-only.
  *
- * Estrategia:
- *   - Lee de sync_queue LIMIT batchSize registros pendientes.
- *   - Por cada registro: obtiene el payload completo de su tabla.
- *   - Agrupa por table_name y hace upsert en lotes.
- *   - En caso de éxito: marca synced_at y elimina de la cola.
- *   - En caso de fallo: incrementa attempts y agenda reintento exponencial.
- *
- * Tablas sincronizables: workouts, sets, rep_events, body_metrics,
- *   nutrition_logs, hydration_logs, health_connect_cache, personal_records.
+ * CAMBIO: ahora getSupabase() puede retornar null si no hay Supabase
+ * configurado. Manejamos ese caso explícitamente para que el sync worker
+ * no crashee, simplemente devuelva 0 pushed / 0 failed.
  */
 import { openDatabase, queryAsync, execAsync } from "@/modules/persistence/db";
 import { getSupabase } from "./supabaseClient";
@@ -95,9 +89,14 @@ export async function drainSyncQueue(): Promise<SyncRunResult> {
     return { pushed: 0, failed: 0 };
   }
 
+  // 2) Si Supabase no está configurado, no hay nada que hacer.
+  //    Devolvemos failed=0 también para que el worker no reintente infinitamente.
   const supabase = await getSupabase();
+  if (!supabase) {
+    return { pushed: 0, failed: 0, errorMessage: "Supabase no configurado" };
+  }
 
-  // 2) Agrupar por tabla
+  // 3) Agrupar por tabla
   const byTable = new Map<TableName, { queueId: number; recordId: string }[]>();
   for (const p of pending) {
     if (!SYNCABLE_TABLES.includes(p.table_name)) continue;
@@ -110,7 +109,7 @@ export async function drainSyncQueue(): Promise<SyncRunResult> {
   let failed = 0;
   let lastError: string | undefined;
 
-  // 3) Procesar cada tabla en batch
+  // 4) Procesar cada tabla en batch
   for (const [table, items] of byTable.entries()) {
     const cols = TABLE_COLUMNS[table];
     const placeholders = items.map(() => "?").join(",");
@@ -162,7 +161,7 @@ export async function drainSyncQueue(): Promise<SyncRunResult> {
     }
   }
 
-  // 4) Log de la corrida (opcional, ayuda a depurar)
+  // 5) Log de la corrida (opcional, ayuda a depurar)
   await logSyncRun(db, deviceId, pushed, failed, lastError);
 
   return { pushed, failed, errorMessage: lastError };
@@ -202,6 +201,7 @@ function normalizeRow(table: TableName, row: any, deviceId: string): any {
 async function logSyncRun(db: any, deviceId: string, pushed: number, failed: number, err?: string) {
   try {
     const supabase = await getSupabase();
+    if (!supabase) return;
     await supabase.from("sync_log").insert({
       device_id: deviceId,
       table_name: "_batch",
