@@ -12,27 +12,20 @@
  *   `android/build.gradle` raíz pero el compilador Kotlin del módulo :app no
  *   las ve → errores "Unresolved reference: mediapipe", etc.
  *
- * Solución: parchear directamente `android/app/build.gradle` con
- * `withAppBuildGradle` e insertar `implementation "..."` líneas en el bloque
- * `dependencies { }`.
+ * Estrategia ROBUSTA (v2 — sin regex problemático):
+ *   Antes intentaba capturar y reconstruir el bloque `dependencies { ... }`
+ *   con regex `/dependencies\s*\{([^}]*)\}/s`. Eso rompía el archivo si
+ *   dentro había `if/else` anidados con `}` internos (que SIEMPRE los hay
+ *   por el bloque `if (hermesEnabled) { ... } else { ... }`).
+ *
+ *   Ahora: solo busca la línea `dependencies {` y inserta las nuevas líneas
+ *   justo DESPUÉS, sin tocar el resto del archivo. Idempotente.
  *
  * Dependencias añadidas:
  *   - com.google.mediapipe:tasks-vision:0.10.14
- *       Para PoseLandmarker, BaseOptions, RunningMode, Delegate, MPImage,
- *       BitmapImageBuilder (clases usadas en PoseLandmarkerPlugin.kt).
  *   - androidx.health.connect:connect-client:1.1.0-alpha11
- *       Para HealthConnectPermissionDelegate (usada en MainActivity.kt,
- *       inyectada por with-health-connect-delegate.js).
  *   - androidx.camera:camera-core:1.3.4
- *       Para androidx.camera.core.ImageProxy (usado en PoseLandmarkerPlugin
- *       y expuesto por VisionCamera v4 como tipo público).
  *   - androidx.appcompat:appcompat:1.6.1
- *       Dependencia transitiva de MediaPipe; la añadimos por si la versión
- *       de RN no la trae (algunos setups Custom RN 0.74 la omiten).
- *
- * Idempotente: si las dependencias ya están, no las duplica.
- *
- * Declarado en app.config.ts -> plugins: ["./plugins/with-app-gradle-deps"].
  */
 const { withAppBuildGradle } = require("expo/config-plugins");
 
@@ -45,57 +38,67 @@ const DEPS_TO_ADD = [
 
 module.exports = function withAppGradleDeps(config) {
   return withAppBuildGradle(config, (cfg) => {
-    let contents = cfg.modResults.contents;
+    const lines = cfg.modResults.contents.split("\n");
 
-    // Buscar el bloque dependencies { ... }
-    const depsBlockMatch = contents.match(/dependencies\s*\{([^}]*)\}/s);
-    if (!depsBlockMatch) {
-      console.warn(
-        "[with-app-gradle-deps] WARNING: no se encontró bloque 'dependencies {}' " +
-        "en app/build.gradle. Las dependencias nativas no se añadieron."
-      );
+    // 1) Buscar la línea "dependencies {" (con o sin indentación).
+    //    Solo la PRIMERA ocurrencia: en Expo RN 0.74 hay un único bloque
+    //    dependencies en app/build.gradle.
+    let depsLineIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^\s*dependencies\s*\{/.test(lines[i])) {
+        depsLineIdx = i;
+        break;
+      }
+    }
+
+    // 2) Determinar qué dependencias faltan (búsqueda simple de substring,
+    //    sin regex problemático).
+    const fullContents = cfg.modResults.contents;
+    const toInsert = [];
+    for (const dep of DEPS_TO_ADD) {
+      // Extraer "group:artifact" para buscar (sin versión, porque la versión
+      // puede venir dada por otra fuente como ext variables).
+      // dep = 'implementation "com.google.mediapipe:tasks-vision:0.10.14"'
+      // → artifactKey = "com.google.mediapipe:tasks-vision"
+      const m = dep.match(/"([^"]+):([^"]+):/);
+      if (!m) continue;
+      const artifactKey = `${m[1]}:${m[2]}`;
+
+      // Si el artifactKey ya está en el archivo (cualquier versión), NO añadir.
+      if (fullContents.includes(artifactKey)) {
+        continue;
+      }
+      toInsert.push("    " + dep);
+    }
+
+    if (toInsert.length === 0) {
+      console.log("[with-app-gradle-deps] todas las dependencias ya presentes, sin cambios.");
       return cfg;
     }
 
-    const depsBlock = depsBlockMatch[1];
-    let newDepsBlock = depsBlock;
-    let added = 0;
-
-    for (const dep of DEPS_TO_ADD) {
-      // Comprobar si la dependencia ya está (por nombre de artifact, sin versión).
-      // Ejemplo: 'implementation "com.google.mediapipe:tasks-vision:0.10.14"'
-      //   → buscamos "com.google.mediapipe:tasks-vision" en el bloque.
-      const artifactMatch = dep.match(/"([^"]+):([^"]+)"/);
-      if (!artifactMatch) continue;
-      const artifactKey = `${artifactMatch[1]}:${artifactMatch[2]}`;
-
-      // Si ya existe cualquier versión de esa dependencia, no la duplicamos.
-      const alreadyPresent = new RegExp(artifactKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(newDepsBlock);
-      if (alreadyPresent) {
-        continue;
-      }
-
-      // Añadir al final del bloque dependencies.
-      newDepsBlock = newDepsBlock + "\n    " + dep;
-      added++;
-    }
-
-    if (added > 0) {
-      // Reconstruir el archivo con el nuevo bloque dependencies.
-      contents = contents.replace(
-        /dependencies\s*\{([^}]*)\}/s,
-        `dependencies {${newDepsBlock}\n  }`
+    // 3) Insertar las líneas nuevas.
+    if (depsLineIdx === -1) {
+      // No encontramos "dependencies {"; creamos un nuevo bloque al final.
+      console.warn(
+        "[with-app-gradle-deps] WARNING: 'dependencies {' no encontrado, " +
+        "creando nuevo bloque al final del archivo."
       );
-      cfg.modResults.contents = contents;
-      console.log(
-        `[with-app-gradle-deps] ${added} dependencia(s) nativa(s) añadida(s) a app/build.gradle`
-      );
+      lines.push("");
+      lines.push("dependencies {");
+      for (const d of toInsert) lines.push(d);
+      lines.push("}");
     } else {
-      console.log(
-        "[with-app-gradle-deps] todas las dependencias ya están presentes, sin cambios."
-      );
+      // Insertar justo DESPUÉS de la línea "dependencies {".
+      // splice muta el array; insertamos en orden inverso para mantener orden.
+      for (let j = toInsert.length - 1; j >= 0; j--) {
+        lines.splice(depsLineIdx + 1, 0, toInsert[j]);
+      }
     }
 
+    cfg.modResults.contents = lines.join("\n");
+    console.log(
+      `[with-app-gradle-deps] ${toInsert.length} dependencia(s) añadida(s) a app/build.gradle`
+    );
     return cfg;
   });
 };
