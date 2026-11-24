@@ -21,7 +21,9 @@ import {
   requestAllPermissions,
   getCurrentPermissionState,
   openHealthConnectInPlayStore,
-  openHealthConnectApp
+  openHealthConnectApp,
+  isNativeModuleLoaded,
+  invalidateAvailabilityCache
 } from "@/modules/health/healthConnectClient";
 import type { Availability, PermissionState } from "@/modules/health/types";
 
@@ -46,6 +48,9 @@ export const HealthConnectScreen: React.FC = () => {
   const [syncingNow, setSyncingNow] = useState(false);
   const [todayMetrics, setTodayMetrics] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const nativeLoaded = isNativeModuleLoaded();
+  const [requestingPerm, setRequestingPerm] = useState(false);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -96,6 +101,18 @@ export const HealthConnectScreen: React.FC = () => {
 
       {/* --- Availability --- */}
       <Section title="Health Connect">
+        {!nativeLoaded && (
+          <>
+            <Text style={styles.hint}>
+              ⚠️ El módulo nativo de react-native-health-connect NO está cargado.
+              Esto significa que el config plugin no se aplicó correctamente.
+              Tienes que hacer un rebuild limpio:
+            </Text>
+            <Text style={[styles.hint, { fontFamily: 'monospace' }]}>
+              npx expo prebuild --platform android --clean{'\n'}eas build --profile preview --platform android
+            </Text>
+          </>
+        )}
         <Row label="Estado">
           <Badge
             color={availability === "installed" ? colors.ok : colors.warning}
@@ -105,10 +122,27 @@ export const HealthConnectScreen: React.FC = () => {
         {availability !== "installed" && (
           <>
             <Text style={styles.hint}>
-              Si ya tienes Health Connect instalado y sigue saliendo "No detectado", es probable que el módulo nativo necesite reinstalarse tras un rebuild. Toca abajo para abrir Play Store y verificar:
+              Si ya tienes Health Connect instalado y sigue saliendo "No detectado", puede deberse a:{'\n'}
+              • Android 13- sin HC instalado (instálalo desde Play Store abajo).{'\n'}
+              • Falta el &lt;queries&gt; en AndroidManifest (ya arreglado en el config plugin).{'\n'}
+              • Build sin aplicar el plugin → ejecuta `expo prebuild --clean`.
             </Text>
-            <Pressable style={styles.btnPrimary} onPress={openHealthConnectInPlayStore}>
+            <Pressable style={styles.btnPrimary} onPress={async () => {
+              await openHealthConnectInPlayStore();
+              // Tras volver de Play Store, invalida caché para re-checkear.
+              setTimeout(async () => {
+                invalidateAvailabilityCache();
+                await refresh();
+              }, 5000);
+            }}>
               <Text style={styles.btnPrimaryText}>Abrir Health Connect en Play Store</Text>
+            </Pressable>
+            <Pressable style={styles.btnSecondary} onPress={async () => {
+              invalidateAvailabilityCache();
+              setAvailability("checking");
+              await refresh();
+            }}>
+              <Text style={styles.btnSecondaryText}>Recomprobar ahora</Text>
             </Pressable>
           </>
         )}
@@ -129,11 +163,39 @@ export const HealthConnectScreen: React.FC = () => {
             }
           />
         </Row>
-        <Pressable style={styles.btnPrimary} onPress={async () => {
-          const r = await requestAllPermissions();
-          setPermState(r);
-        }}>
-          <Text style={styles.btnPrimaryText}>Conceder permisos</Text>
+        {permissionError && (
+          <Text style={[styles.hint, { color: colors.error }]}>
+            ⚠️ {permissionError}
+          </Text>
+        )}
+        <Pressable
+          style={[styles.btnPrimary, requestingPerm && styles.btnDisabled]}
+          disabled={requestingPerm}
+          onPress={async () => {
+            setRequestingPerm(true);
+            setPermissionError(null);
+            try {
+              const r = await requestAllPermissions();
+              setPermState(r);
+              if (r === "not_requested") {
+                setPermissionError(
+                  "El sistema no respondió tras 30s. Posible causa: falta el HealthConnectPermissionDelegate o el activity-alias en AndroidManifest. Reconstruye el APK con `expo prebuild --clean`."
+                );
+              } else if (r === "denied") {
+                setPermissionError(
+                  "Permisos denegados. Si HC no muestra el diálogo, puede que el activity-alias no esté registrado. Reconstruye el APK o abre los ajustes de Health Connect manualmente."
+                );
+              }
+            } catch (err: any) {
+              setPermissionError(`Error inesperado: ${err?.message ?? String(err)}`);
+            } finally {
+              setRequestingPerm(false);
+            }
+          }}
+        >
+          {requestingPerm
+            ? <ActivityIndicator color="#000" />
+            : <Text style={styles.btnPrimaryText}>Conceder permisos</Text>}
         </Pressable>
       </Section>
 

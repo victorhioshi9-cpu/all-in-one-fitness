@@ -1,0 +1,47 @@
+# --- Node ---
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm
+.yarn/
+
+# --- Expo / EAS ---
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# --- Native build dirs (generados por prebuild) ---
+android/
+ios/
+
+# --- EAS local ---
+.easignore
+
+# --- Environment ---
+.env
+.env.local
+.env.*.local
+*.env.local
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Coverage / test artifacts ---
+coverage/
+__tests__/__snapshots__/
+
+# --- Patches generados ---
+# (mantenemos patches/ deliberadamente, son source)
+
+# --- Temp / cache ---
+.cache/
+*.tsbuildinfo

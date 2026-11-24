@@ -40,10 +40,10 @@ export default ({ config }) => ({
       "react-native-vision-camera",
       {
         cameraPermissionText:
-          "Esta app necesita la c?mara para detectar tu postura en tiempo real y darte correcciones biomec?nicas. El video nunca sale del dispositivo.",
+          "Esta app necesita la cámara para detectar tu postura en tiempo real y darte correcciones biomecánicas. El video nunca sale del dispositivo.",
         enableMicrophonePermission: true,
         microphonePermissionText:
-          "El micr?fono se usa solo si decides grabar audio al exportar una serie."
+          "El micrófono se usa solo si decides grabar audio al exportar una serie."
       }
     ],
     "expo-file-system",
@@ -60,7 +60,9 @@ export default ({ config }) => ({
         ]
       }
     ],
-    "./plugins/fix-permissions-service",
+    "./plugins/with-health-connect-queries",
+    "./plugins/with-health-connect-delegate",
+    "./plugins/with-native-pose",
     [
       "expo-build-properties",
       {
@@ -69,10 +71,12 @@ export default ({ config }) => ({
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           buildFeatures: { buildConfig: true },
-          extraMavenRepos: ["https://dl.maven.org/maven2/"],
+          extraMavenRepos: [
+            "https://dl.maven.org/maven2/",
+            "https://maven.google.com/"
+          ],
           dependencies: [
             "com.google.mediapipe:tasks-vision:0.10.14",
-            "androidx.health.connect:connect-client:1.1.0-alpha11",
             "androidx.work:work-runtime-ktx:2.9.0",
             "androidx.appcompat:appcompat:1.6.1"
           ]
