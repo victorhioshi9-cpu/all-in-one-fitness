@@ -30,7 +30,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, useWindowDimensions, ActivityIndicator,
-  ScrollView, FlatList
+  ScrollView, FlatList, Linking, Alert
 } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
@@ -184,13 +184,83 @@ export const CameraScreen: React.FC = () => {
     }
   }, [mode, preset]);
 
+  // --- Manejador de permiso de cámara ---
+  // BUGFIX (v0.3.2): Antes se pasaba `cameraPerm.requestPermission` directamente
+  // al onPress del Pressable. Eso causaba 3 problemas:
+  //   1. Pressable pasa un PressEvent como argumento; requestPermission no lo espera
+  //      y en algunos dispositivos la llamada falla silenciosamente.
+  //   2. La Promise devuelta por requestPermission no se awaited ni catch'eaba →
+  //      unhandled rejection silencioso.
+  //   3. Si el usuario denegó 2 veces en Android 13+, el diálogo ya no aparece
+  //      (permiso "permanentemente denegado") y la UI no ofrecía fallback para
+  //      abrir Ajustes → la app se quedaba pegada en esta pantalla.
+  // Ahora envolvemos en una función async con try/catch, comprobamos si tras
+  // pedir el permiso sigue sin concederse (caso permanentemente denegado) y
+  // ofrecemos un Alert con botón para abrir Ajustes del sistema.
+  const handleRequestCameraPermission = useCallback(async () => {
+    try {
+      const granted = await cameraPerm.requestPermission();
+      // En react-native-vision-camera v4.5, requestPermission() devuelve boolean.
+      // Si tras pedir el permiso sigue sin concederse, lo más probable es que
+      // el usuario lo haya denegado 2 veces en Android 13+ y el diálogo ya no
+      // aparezca (permiso "permanentemente denegado").
+      if (!granted) {
+        Alert.alert(
+          "Permiso de cámara bloqueado",
+          "Has denegado el permiso de cámara varias veces. Android ya no muestra el diálogo.\n\n" +
+          "Para concederlo, abre Ajustes → Aplicaciones → All-in-One Fitness → Permisos → Cámara → Permitir.",
+          [
+            { text: "Cancelar", style: "cancel" },
+            {
+              text: "Abrir Ajustes",
+              style: "default",
+              onPress: () => {
+                Linking.openSettings().catch(() => {});
+              }
+            }
+          ]
+        );
+      }
+      // Si granted === true, el hook useCameraPermission actualizará
+      // hasPermission y el componente se re-renderizará automáticamente.
+    } catch (err: any) {
+      console.error("[CameraScreen] requestPermission error:", err);
+      Alert.alert(
+        "No se pudo pedir el permiso",
+        "Ocurrió un error al solicitar el permiso de cámara: " + (err?.message ?? String(err)),
+        [
+          { text: "OK", style: "default" },
+          {
+            text: "Abrir Ajustes",
+            style: "default",
+            onPress: () => Linking.openSettings().catch(() => {})
+          }
+        ]
+      );
+    }
+  }, [cameraPerm]);
+
   // --- Render ---
   if (!cameraPerm.hasPermission) {
     return (
       <View style={styles.center}>
         <Text style={styles.title}>Permiso de cámara requerido</Text>
-        <Pressable style={styles.btn} onPress={cameraPerm.requestPermission}>
+        <Text style={styles.hint}>
+          La cámara se usa solo dentro de esta app para detectar tu postura en
+          tiempo real. El video nunca sale del dispositivo.
+        </Text>
+        <Pressable
+          style={styles.btn}
+          onPress={handleRequestCameraPermission}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
           <Text style={styles.btnText}>Conceder acceso</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.btn, { backgroundColor: "rgba(255,255,255,0.06)", marginTop: spacing.sm }]}
+          onPress={() => Linking.openSettings().catch(() => {})}
+        >
+          <Text style={[styles.btnText, { color: colors.bright }]}>Abrir Ajustes</Text>
         </Pressable>
       </View>
     );
@@ -591,6 +661,14 @@ const styles = StyleSheet.create({
   title: { color: colors.bright, fontSize: 22, fontWeight: "700", marginBottom: spacing.lg },
   btn: { backgroundColor: colors.accent, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md },
   btnText: { color: colors.bg, fontWeight: "800", fontSize: 16 },
+  hint: {
+    color: colors.textMuted,
+    fontSize: 13,
+    textAlign: "center",
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    lineHeight: 19
+  },
   thermalBadge: {
     position: "absolute", top: spacing.md, right: spacing.md,
     backgroundColor: "rgba(8, 10, 14, 0.85)", paddingHorizontal: spacing.sm, paddingVertical: 4,
