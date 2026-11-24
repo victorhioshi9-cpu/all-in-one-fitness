@@ -62,8 +62,6 @@ export default ({ config }) => ({
     ],
     "./plugins/fix-permissions-service",
     "./plugins/with-health-connect-queries",
-    "./plugins/with-native-pose",
-    "./plugins/with-app-gradle-deps",
     [
       "expo-build-properties",
       {
@@ -75,11 +73,6 @@ export default ({ config }) => ({
           extraMavenRepos: [
             "https://dl.maven.org/maven2/",
             "https://maven.google.com/"
-          ],
-          dependencies: [
-            "com.google.mediapipe:tasks-vision:0.10.14",
-            "androidx.work:work-runtime-ktx:2.9.0",
-            "androidx.appcompat:appcompat:1.6.1"
           ]
         }
       }
