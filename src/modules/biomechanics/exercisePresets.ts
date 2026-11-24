@@ -450,6 +450,7 @@ export const BURPEE: ExercisePreset = {
 // Catálogo ampliado
 // ============================================================================
 export const EXERCISE_PRESETS: Record<string, ExercisePreset> = {
+  // --- Originales (19) ---
   squat: SQUAT,
   bicep_curl: CURL,
   shoulder_press: SHOULDER_PRESS,
@@ -468,7 +469,32 @@ export const EXERCISE_PRESETS: Record<string, ExercisePreset> = {
   tricep_dips: TRICEP_DIPS,
   leg_extension: LEG_EXTENSION,
   calf_raise: CALF_RAISE,
-  burpee: BURPEE
+  burpee: BURPEE,
+
+  // --- Extras (variantes + nuevos, reutilizando presets biomecánicos similares) ---
+  front_squat: { ...SQUAT, id: "front_squat", name: "Sentadilla frontal", emoji: "🏋️‍♂️", primaryMuscle: "Cuádriceps", calibrationHint: "Mantén el torso vertical, codos arriba." },
+  goblet_squat: { ...SQUAT, id: "goblet_squat", name: "Goblet squat", emoji: "🪣", primaryMuscle: "Cuádriceps", calibrationHint: "Pesón pegado al pecho, baja hasta 90°." },
+  split_squat: { ...LUNGE, id: "split_squat", name: "Split squat", emoji: "🦵", primaryMuscle: "Glúteo + Cuádriceps", calibrationHint: "Pie atrás en banco o suelo, baja recto." },
+  bulgarian_split: { ...LUNGE, id: "bulgarian_split", name: "Búlgara", emoji: "🦵", primaryMuscle: "Glúteo", calibrationHint: "Pie atrás elevado, rodilla 90° al frente." },
+  romanian_deadlift: { ...DEADLIFT, id: "romanian_deadlift", name: "Peso muerto rumano", emoji: "🏋️", primaryMuscle: "Isquios", calibrationHint: "Piernas casi rectas, baja con cadera atrás." },
+  sumo_deadlift: { ...DEADLIFT, id: "sumo_deadlift", name: "Peso muerto sumo", emoji: "🏋️", primaryMuscle: "Adductores + Glúteo", calibrationHint: "Pies abiertos, manos por dentro." },
+  incline_press: { ...BENCH_PRESS, id: "incline_press", name: "Press inclinado", emoji: "🏋️‍♂️", primaryMuscle: "Pecho superior", calibrationHint: "Banco 30°, baja a clavícula." },
+  decline_press: { ...BENCH_PRESS, id: "decline_press", name: "Press declinado", emoji: "🏋️‍♂️", primaryMuscle: "Pecho inferior", calibrationHint: "Banco -15°, baja al esternón." },
+  dumbbell_curl: { ...CURL, id: "dumbbell_curl", name: "Curl mancuerna", emoji: "💪", primaryMuscle: "Bíceps", calibrationHint: "Codos pegados al cuerpo, sin balanceo." },
+  hammer_curl: { ...CURL, id: "hammer_curl", name: "Curl martillo", emoji: "🔨", primaryMuscle: "Bíceps + Braquial", calibrationHint: "Agarre neutro, sube recto." },
+  concentration_curl: { ...CURL, id: "concentration_curl", name: "Curl concentración", emoji: "🧘", primaryMuscle: "Bíceps", calibrationHint: "Codo apoyado en muslo, aísla el bíceps." },
+  skull_crusher: { ...TRICEP_DIPS, id: "skull_crusher", name: "Skull crusher", emoji: "💀", primaryMuscle: "Tríceps", calibrationHint: "Codos fijos, baja a la frente." },
+  tricep_pushdown: { ...TRICEP_DIPS, id: "tricep_pushdown", name: "Extensión polea", emoji: "🔗", primaryMuscle: "Tríceps", calibrationHint: "Codos pegados, extiende abajo." },
+  face_pull: { ...ROW, id: "face_pull", name: "Face pull", emoji: "😤", primaryMuscle: "Deltoides posterior", calibrationHint: "Polea alta, tira a la frente." },
+  upright_row: { ...LATERAL_RAISE, id: "upright_row", name: "Remo al mentón", emoji: "🏋️", primaryMuscle: "Trapecio + Deltoides", calibrationHint: "Agarre estrecho, sube al mentón." },
+  reverse_fly: { ...LATERAL_RAISE, id: "reverse_fly", name: "Pájaros (reverse fly)", emoji: "🐦", primaryMuscle: "Deltoides posterior", calibrationHint: "Inclinado, abre brazos lateral." },
+  leg_curl: { ...LEG_EXTENSION, id: "leg_curl", name: "Curl femoral", emoji: "🦵", primaryMuscle: "Isquios", calibrationHint: "Máquina tumbado, dobla rodillas." },
+  hip_abductor: { ...HIP_THRUST, id: "hip_abductor", name: "Abductor cadera", emoji: "🦵", primaryMuscle: "Glúteo medio", calibrationHint: "Máquina, abre piernas controlado." },
+  hanging_leg_raise: { ...RUSSIAN_TWIST, id: "hanging_leg_raise", name: "Elevación piernas", emoji: "🤸", primaryMuscle: "Abdomen", calibrationHint: "Colgado, sube piernas a 90°." },
+  plank_shoulder_tap: { ...PLANK, id: "plank_shoulder_tap", name: "Plancha toque hombro", emoji: "👋", primaryMuscle: "Core", calibrationHint: "Plancha, toca hombro alternante." },
+  mountain_climber: { ...BURPEE, id: "mountain_climber", name: "Escalador", emoji: "⛰️", primaryMuscle: "Core + Cardio", calibrationHint: "Plancha, rodilla al pecho alternando." },
+  jump_rope: { ...JUMPING_JACK, id: "jump_rope", name: "Saltar cuerda", emoji: "🪢", primaryMuscle: "Cardio", calibrationHint: "Saltos bajos, ritmo constante." },
+  high_knees: { ...JUMPING_JACK, id: "high_knees", name: "Rodillas arriba", emoji: "🏃", primaryMuscle: "Cardio", calibrationHint: "Rodillas a la cintura, rápido." }
 };
 
 export const PRESET_LIST = Object.values(EXERCISE_PRESETS);

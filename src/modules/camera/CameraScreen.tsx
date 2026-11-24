@@ -1,20 +1,20 @@
 /**
- * CameraScreen.tsx — Versión funcional simple (v0.3.4)
+ * CameraScreen.tsx — Versión funcional simple (v0.3.5)
  * ----------------------------------------------------------------------------
  * Versión sin react-native-reanimated, sin Skia overlay, sin pose detection.
  * Solo preview de cámara + selector de ejercicio + steppers grandes.
  *
- * Razón: la versión completa con useSharedValue + SkeletonOverlay rompía los
- * toques en toda la app. Esta versión usa solo React Native básico y
- * react-native-vision-camera (sin frame processor).
- *
- * Cuando se quiera reactivar pose detection, hay que diagnosticar por qué
- * useSharedValue + Skia Canvas + frame processor rompen gesture handling.
+ * Cambios v0.3.5:
+ *   - Selección directa: al tocar un ejercicio, se inicia la cámara al instante
+ *     (sin botón "Iniciar cámara").
+ *   - Buscador de ejercicios (filtro por texto).
+ *   - Categorías collapsables (tap header para mostrar/ocultar ejercicios).
+ *   - Catálogo ampliado a 41 ejercicios.
  */
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
-  ActivityIndicator, Linking, Alert
+  ActivityIndicator, Linking, Alert, TextInput
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useKeepAwake } from "expo-keep-awake";
@@ -45,6 +45,8 @@ export const CameraScreen: React.FC = () => {
   const [targetReps, setTargetReps] = useState(8);
   const [weight, setWeight] = useState(40);
   const [count, setCount] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
   const cameraRef = useRef<any>(null);
 
   // --- Manejador de permiso de cámara ---
@@ -73,6 +75,24 @@ export const CameraScreen: React.FC = () => {
       );
     }
   };
+
+  // --- Seleccionar ejercicio e ir directo a tracking ---
+  const selectExercise = (ex: ExercisePreset) => {
+    setPreset(ex);
+    setCount(0);
+    setMode("tracking");
+  };
+
+  // --- Filtrar ejercicios por búsqueda ---
+  const filteredExercises = useMemo(() => {
+    const all = Object.values(EXERCISE_PRESETS);
+    if (!searchQuery.trim()) return all;
+    const q = searchQuery.toLowerCase().trim();
+    return all.filter((ex) =>
+      ex.name.toLowerCase().includes(q) ||
+      (ex.primaryMuscle ?? "").toLowerCase().includes(q)
+    );
+  }, [searchQuery]);
 
   // --- Render: sin permiso ---
   if (!cameraPerm.hasPermission) {
@@ -112,8 +132,7 @@ export const CameraScreen: React.FC = () => {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.selectorContainer}>
         <Text style={styles.selectorTitle}>Coach AI</Text>
         <Text style={styles.selectorSubtitle}>
-          Selecciona un ejercicio. La cámara abrirá en modo preview (la detección
-          de pose se reactivará en una próxima versión).
+          Toca un ejercicio para iniciar la cámara al instante.
         </Text>
 
         {/* Steppers grandes */}
@@ -144,47 +163,70 @@ export const CameraScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Categorías con ejercicios */}
+        {/* Buscador */}
+        <View style={styles.searchBox}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Buscar ejercicio o músculo…"
+            placeholderTextColor={colors.textMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
+              <Text style={styles.searchClear}>✕</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* Categorías con ejercicios (collapsables) */}
         {CATEGORY_ORDER.map((cat) => {
           const meta = CATEGORY_META[cat];
-          const exercises = Object.values(EXERCISE_PRESETS).filter((p) => p.category === cat);
+          const exercises = filteredExercises.filter((p) => p.category === cat);
           if (exercises.length === 0) return null;
+          const isCollapsed = collapsedCats[cat] === true;
+
           return (
             <View key={cat} style={styles.categoryBlock}>
-              <View style={styles.categoryHeader}>
+              <Pressable
+                style={styles.categoryHeader}
+                onPress={() => setCollapsedCats((c) => ({ ...c, [cat]: !isCollapsed }))}
+              >
                 <Text style={styles.categoryEmoji}>{meta.emoji}</Text>
                 <Text style={styles.categoryLabel}>{meta.label}</Text>
-              </View>
-              <View style={styles.exGrid}>
-                {exercises.map((ex) => {
-                  const selected = preset.id === ex.id;
-                  return (
-                    <Pressable
-                      key={ex.id}
-                      style={[styles.exCard, selected && { borderColor: meta.color, borderWidth: 2 }]}
-                      onPress={() => setPreset(ex)}
-                    >
-                      <View style={[styles.exStripe, { backgroundColor: meta.color }]} />
-                      <Text style={styles.exEmoji}>{ex.emoji ?? "🏋️"}</Text>
-                      <Text style={styles.exName}>{ex.name}</Text>
-                      <Text style={styles.exMuscle}>{ex.primaryMuscle ?? ""}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+                <Text style={styles.categoryCount}>{exercises.length}</Text>
+                <Text style={styles.categoryChevron}>{isCollapsed ? "▸" : "▾"}</Text>
+              </Pressable>
+
+              {!isCollapsed && (
+                <View style={styles.exGrid}>
+                  {exercises.map((ex) => {
+                    const selected = preset.id === ex.id;
+                    return (
+                      <Pressable
+                        key={ex.id}
+                        style={[styles.exCard, selected && { borderColor: meta.color, borderWidth: 2 }]}
+                        onPress={() => selectExercise(ex)}
+                      >
+                        <View style={[styles.exStripe, { backgroundColor: meta.color }]} />
+                        <Text style={styles.exEmoji}>{ex.emoji ?? "🏋️"}</Text>
+                        <Text style={styles.exName}>{ex.name}</Text>
+                        <Text style={styles.exMuscle}>{ex.primaryMuscle ?? ""}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
             </View>
           );
         })}
 
-        <Pressable
-          style={[styles.btn, { marginTop: spacing.lg, alignSelf: "stretch" }]}
-          onPress={() => {
-            setCount(0);
-            setMode("tracking");
-          }}
-        >
-          <Text style={styles.btnText}>Iniciar cámara</Text>
-        </Pressable>
+        <Text style={styles.footerHint}>
+          {filteredExercises.length} ejercicios · Toca cualquiera para iniciar
+        </Text>
       </ScrollView>
     );
   }
@@ -225,11 +267,13 @@ export const CameraScreen: React.FC = () => {
         </View>
         <View style={styles.hudStat}>
           <Text style={styles.hudStatLabel}>Peso</Text>
-          <Text style={styles.hudStatValue}>{weight} kg</Text>
+          <Text style={styles.hudStatValue}>{weight}</Text>
+          <Text style={styles.hudStatUnit}>kg</Text>
         </View>
         <View style={styles.hudStat}>
           <Text style={styles.hudStatLabel}>Objetivo</Text>
           <Text style={styles.hudStatValue}>{targetReps}</Text>
+          <Text style={styles.hudStatUnit}>reps</Text>
         </View>
       </View>
     </View>
@@ -260,10 +304,29 @@ const styles = StyleSheet.create({
   stepperBtnText: { color: colors.bg, fontSize: 22, fontWeight: "900" },
   stepperValue: { color: colors.bright, fontSize: 22, fontWeight: "800", minWidth: 50, textAlign: "center" },
 
+  // Buscador
+  searchBox: {
+    flexDirection: "row", alignItems: "center", backgroundColor: colors.bgCard,
+    borderWidth: 1, borderColor: colors.dim, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    marginBottom: spacing.lg, gap: spacing.sm
+  },
+  searchIcon: { fontSize: 16 },
+  searchInput: { flex: 1, color: colors.bright, fontSize: 15, paddingVertical: 0 },
+  searchClear: { color: colors.textMuted, fontSize: 16, fontWeight: "700", paddingHorizontal: 6 },
+
+  // Categorías
   categoryBlock: { marginBottom: spacing.lg },
-  categoryHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+  categoryHeader: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.sm,
+    backgroundColor: colors.bgCard, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.dim, marginBottom: spacing.sm
+  },
   categoryEmoji: { fontSize: 18 },
-  categoryLabel: { color: colors.bright, fontSize: 16, fontWeight: "700" },
+  categoryLabel: { color: colors.bright, fontSize: 16, fontWeight: "700", flex: 1 },
+  categoryCount: { color: colors.textMuted, fontSize: 12, fontWeight: "700", backgroundColor: colors.bg, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  categoryChevron: { color: colors.textMuted, fontSize: 14, marginLeft: 4 },
 
   exGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   exCard: { width: "47%", backgroundColor: colors.bgCard, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, position: "relative", overflow: "hidden" },
@@ -271,6 +334,8 @@ const styles = StyleSheet.create({
   exEmoji: { fontSize: 28, marginBottom: spacing.xs },
   exName: { color: colors.bright, fontSize: 14, fontWeight: "700", marginBottom: 2 },
   exMuscle: { color: colors.textMuted, fontSize: 11 },
+
+  footerHint: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: spacing.md, marginBottom: spacing.xxl },
 
   // Tracking
   trackingContainer: { flex: 1, backgroundColor: "#000" },
@@ -283,6 +348,7 @@ const styles = StyleSheet.create({
   hudStat: { backgroundColor: "rgba(8,10,14,0.85)", padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, alignItems: "center", minWidth: 90 },
   hudStatLabel: { color: colors.textMuted, fontSize: 11, marginBottom: 4 },
   hudStatValue: { color: colors.bright, fontSize: 24, fontWeight: "900" },
+  hudStatUnit: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   hudStatRow: { flexDirection: "row", gap: 6, marginTop: 6 },
   hudStepperBtn: { backgroundColor: colors.accent, width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   hudStepperText: { color: colors.bg, fontSize: 18, fontWeight: "900" }

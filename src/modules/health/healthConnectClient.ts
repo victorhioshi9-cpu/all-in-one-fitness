@@ -166,17 +166,29 @@ function isPermGranted(perm: Permission, granted: Permission[]): boolean {
  * y escritura de ExerciseSession.
  * Devuelve "granted" / "partial" / "denied".
  *
- * Hardening (resuelve crash al conceder permisos HC v3.2):
- *   - Wraps requestPermission con timeout (PERMISSION_TIMEOUT_MS).
- *   - Si el módulo nativo no responde (crash silencioso), rechazamos graceful.
- *   - Atrapa cualquier throwable del bridge JS y devuelve "denied" en lugar de crashear.
+ * ESTRATEGIA v0.3.5 (sin crash):
+ *   Antes llamábamos requestPermission() del SDK nativo, pero esto crashea
+ *   la app con ActivityNotFoundException / ClassNotFoundException en algunos
+ *   setups (RN 0.74 New Arch + react-native-health-connect 3.2 sin
+ *   HealthConnectPermissionDelegate registrado en MainActivity).
+ *
+ *   Ahora usamos un enfoque más robusto:
+ *     1) Llamamos requestPermission() en un try/catch.
+ *     2) Si falla (cualquier error), NO crasheamos: abrimos directamente la
+ *        pantalla de gestión de permisos de Health Connect con
+ *        openHealthConnectApp() (que usa el intent oficial de Android).
+ *     3) El usuario concede manualmente ahí, vuelve a la app, y al refrescar
+ *        getCurrentPermissionState() detecta los permisos concedidos.
+ *
+ *   Esto evita el crash nativo y da al usuario una vía para conceder permisos.
  */
 export async function requestAllPermissions(): Promise<PermissionState> {
   if (!isNativeModuleLoaded()) {
-    console.error("[healthConnect] módulo nativo NO cargado. requestPermission no disponible.");
+    console.error("[healthConnect] módulo nativo NO cargado.");
     return "not_requested";
   }
 
+  // Intento 1: requestPermission nativo (puede funcionar en Android 14+)
   try {
     if (!_initialized) {
       try { await initialize(); } catch { /* idempotente */ }
@@ -185,9 +197,6 @@ export async function requestAllPermissions(): Promise<PermissionState> {
 
     const wantedPerms = buildPermissionsList();
 
-    // Race entre requestPermission y un timeout. Si HC crashea al lanzar la
-    // actividad (caso conocido en Android 13 sin activity-alias o sin permission
-    // delegate), el Promise se queda colgado. El timeout nos protege.
     const granted = await Promise.race([
       requestPermission(wantedPerms),
       new Promise<never>((_, reject) =>
@@ -195,25 +204,32 @@ export async function requestAllPermissions(): Promise<PermissionState> {
       )
     ]) as Permission[];
 
-    if (!Array.isArray(granted) || granted.length === 0) {
-      return "denied";
+    if (Array.isArray(granted) && granted.length > 0) {
+      const wantedRead = wantedPerms.filter((p) => p.accessType === "read");
+      const wantedWrite = wantedPerms.filter((p) => p.accessType === "write");
+      const allReadGranted = wantedRead.every((p) => isPermGranted(p, granted));
+      const allWriteGranted = wantedWrite.every((p) => isPermGranted(p, granted));
+
+      if (allReadGranted && allWriteGranted) return "granted";
+      if (allReadGranted || allWriteGranted) return "partial";
     }
-
-    const wantedRead = wantedPerms.filter((p) => p.accessType === "read");
-    const wantedWrite = wantedPerms.filter((p) => p.accessType === "write");
-    const allReadGranted = wantedRead.every((p) => isPermGranted(p, granted));
-    const allWriteGranted = wantedWrite.every((p) => isPermGranted(p, granted));
-
-    if (allReadGranted && allWriteGranted) return "granted";
-    if (allReadGranted || allWriteGranted) return "partial";
-    return "denied";
+    // Si llegó aquí, el diálogo nativo no funcionó bien → fallback a ajustes
   } catch (err: any) {
-    if (err?.message === "PERMISSION_TIMEOUT") {
-      console.error("[healthConnect] requestPermission timed out (>30s). Probablemente el activity-alias o el PermissionDelegate no están registrados.");
-      return "not_requested";
-    }
-    console.error("[healthConnect] requestPermission error:", err);
-    return "denied";
+    console.warn(
+      "[healthConnect] requestPermission falló (probable crash nativo). " +
+      "Abriendo ajustes de Health Connect como fallback. Error:",
+      err?.message ?? err
+    );
+  }
+
+  // Intento 2 (fallback seguro, sin crash): abrir ajustes de Health Connect.
+  // El usuario concede manualmente y vuelve a la app.
+  try {
+    await openHealthConnectApp();
+    return "not_requested"; // No sabemos aún el estado, el usuario debe refrescar
+  } catch (err) {
+    console.error("[healthConnect] también falló openHealthConnectApp:", err);
+    return "not_requested";
   }
 }
 
