@@ -230,11 +230,11 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       throw IOException("Frame.imageProxy no disponible: ${e.message}")
     }
 
-    val width = imageProxy.width
-    val height = imageProxy.height
+    val width: Int = imageProxy.width
+    val height: Int = imageProxy.height
 
     // 1) YUV -> NV21 -> JPEG -> Bitmap
-    val nv21 = yuv420ToNv21(imageProxy, width, height)
+    val nv21 = yuv420ToNv21(imageProxy)
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
     val out = ByteArrayOutputStream()
     yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
@@ -245,11 +245,11 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     // 2) Rotar el bitmap según la orientación del frame.
     //    VisionCamera v4.5: frame.orientation devuelve Orientation enum.
     //    Convertimos a degrees para postRotate.
-    val rotationDegrees = try {
+    val rotationDegrees: Float = try {
       orientationToDegrees(frame.orientation)
     } catch (e: Exception) {
       // Si el frame se invalidó, asumimos portrait
-      0
+      0f
     }
     if (rotationDegrees != 0f) {
       val matrix = Matrix().apply { postRotate(rotationDegrees) }
@@ -281,9 +281,11 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
    * android.media.Image.Plane[]. La API es similar pero conviene usar
    * rowStride/pixelStride del PlaneProxy.
    */
-  private fun yuv420ToNv21(imageProxy: androidx.camera.core.ImageProxy, width: Int, height: Int): ByteArray {
-    val ySize = width * height
-    val uvSize = ySize / 2
+  private fun yuv420ToNv21(imageProxy: androidx.camera.core.ImageProxy): ByteArray {
+    val width: Int = imageProxy.width
+    val height: Int = imageProxy.height
+    val ySize: Int = width * height
+    val uvSize: Int = ySize / 2
     val nv21 = ByteArray(ySize + uvSize)
 
     val planes = imageProxy.planes
@@ -291,17 +293,17 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     val uBuffer = planes[1].buffer
     val vBuffer = planes[2].buffer
 
-    val yRowStride = planes[0].rowStride
-    val uvRowStride = planes[1].rowStride
-    val uvPixelStride = planes[1].pixelStride
+    val yRowStride: Int = planes[0].rowStride
+    val uvRowStride: Int = planes[1].rowStride
+    val uvPixelStride: Int = planes[1].pixelStride
 
     // Copia Y
-    var pos = 0
+    var pos: Int = 0
     if (yRowStride == width) {
       yBuffer.get(nv21, 0, ySize)
       pos = ySize
     } else {
-      var row = 0
+      var row: Int = 0
       while (row < height) {
         yBuffer.position(row * yRowStride)
         yBuffer.get(nv21, pos, width)
@@ -317,15 +319,15 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       vuBuffer.get(nv21, ySize, uvSize)
     } else {
       // Caso general: copia pixel a pixel
-      var uvPos = ySize
-      val uvHeight = height / 2
-      val uvWidth = width / 2
-      var row = 0
+      var uvPos: Int = ySize
+      val uvHeight: Int = height / 2
+      val uvWidth: Int = width / 2
+      var row: Int = 0
       while (row < uvHeight) {
-        var col = 0
+        var col: Int = 0
         while (col < uvWidth) {
-          val vIdx = row * uvRowStride + col * uvPixelStride
-          val uIdx = row * uvRowStride + col * uvPixelStride
+          val vIdx: Int = row * uvRowStride + col * uvPixelStride
+          val uIdx: Int = row * uvRowStride + col * uvPixelStride
           if (vIdx < vBuffer.limit()) nv21[uvPos++] = vBuffer.get(vIdx)
           if (uIdx < uBuffer.limit()) nv21[uvPos++] = uBuffer.get(uIdx)
           col++

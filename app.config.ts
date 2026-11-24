@@ -64,6 +64,7 @@ export default ({ config }) => ({
     "./plugins/with-health-connect-queries",
     "./plugins/with-health-connect-delegate",
     "./plugins/with-native-pose",
+    "./plugins/with-app-gradle-deps",
     [
       "expo-build-properties",
       {

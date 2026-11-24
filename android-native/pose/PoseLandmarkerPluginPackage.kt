@@ -68,6 +68,7 @@ class PoseLandmarkerPluginPackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
     emptyList()
 
-  override fun getViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-    emptyList()
+  @Suppress("UNCHECKED_CAST", "KotlinInternal")
+  override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
+    emptyList<ViewManager<*, *>>()
 }
