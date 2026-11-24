@@ -1,13 +1,17 @@
 /**
- * RootNavigator.tsx (Fase 3) - Navegación completa.
+ * RootNavigator.tsx (Rediseño v0.4) - Navegación completa.
  *   - Bottom tabs: Coach AI, Readiness, Salud, Entrenos, Nutrición
  *   - Stack modal: Calendario, Periodización, Planificador comidas,
- *     Recomendaciones, Recordatorios, Datos (export).
+ *     Recomendaciones, Recordatorios, Datos (export), Mi perfil.
+ *
+ * Cambios v0.4:
+ *   - Añadido "Mi perfil" en el menú "Más" -> abre ProfileScreen (nueva).
+ *   - Limpieza de imports (ScrollView/View al inicio del archivo).
  */
 import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View, ScrollView } from "react-native";
 import { colors, spacing } from "@/theme/colors";
 
 import { CameraScreen } from "@/modules/camera/CameraScreen";
@@ -20,6 +24,7 @@ import { PeriodizationScreen } from "@/modules/periodization/PeriodizationScreen
 import { MealPlannerScreen } from "@/modules/mealPlanner/MealPlannerScreen";
 import { RecommendationsScreen } from "@/modules/recommendations/RecommendationsScreen";
 import { RemindersScreen } from "@/modules/reminders/localNotifications";
+import { ProfileScreen } from "@/modules/profile/ProfileScreen";
 
 import { exportWorkoutAsJson, exportWorkoutAsCsv, exportFullBackupAsJson, exportTableAsCsv } from "@/modules/export/exportService";
 import { openDatabase, queryAsync } from "@/modules/persistence/db";
@@ -85,10 +90,9 @@ const ExportScreenImpl: React.FC = () => {
   );
 };
 
-import { ScrollView, View } from "react-native";
-
 const TabBarMoreScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   const items = [
+    { label: "Mi perfil", target: "Profile", emoji: "👤" },
     { label: "Calendario", target: "Calendar", emoji: "📅" },
     { label: "Periodización", target: "Periodization", emoji: "🎯" },
     { label: "Plan de comidas", target: "MealPlanner", emoji: "🍽" },
@@ -114,6 +118,9 @@ const TabBarMoreScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
 };
 
 export const RootNavigator: React.FC = () => {
+  // Reference workoutStore to keep it initialized (same behavior as before).
+  void useWorkoutStore();
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Main">
@@ -142,6 +149,7 @@ export const RootNavigator: React.FC = () => {
         )}
       </Stack.Screen>
       <Stack.Screen name="More" component={TabBarMoreScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Más" }} />
+      <Stack.Screen name="Profile" component={ProfileScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Mi perfil" }} />
       <Stack.Screen name="Calendar" component={CalendarScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Calendario" }} />
       <Stack.Screen name="Periodization" component={PeriodizationScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Periodización" }} />
       <Stack.Screen name="MealPlanner" component={MealPlannerScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Plan de comidas" }} />

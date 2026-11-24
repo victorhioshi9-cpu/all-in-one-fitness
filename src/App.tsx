@@ -1,10 +1,16 @@
 /**
- * App.tsx (Fase 3) - Entry point completo con diagnóstico por paso.
+ * App.tsx (Rediseño v0.4) - Entry point completo con diagnóstico por paso.
  *
- * CAMBIO: el loop de startup distingue pasos críticos (que bloquean el
- * arranque si fallan) de pasos best-effort (que solo loguean y continúan).
- * Antes, un fallo en supabase/widgetBridge/audioCoach rompía el loop
- * con break y la app quedaba en pantalla de error.
+ * CAMBIO v0.4: si `onboardingCompleted` es false en el settingsStore,
+ * renderiza <OnboardingScreen /> en lugar del RootNavigator. El usuario debe
+ * completar el wizard (género, edad, altura, peso, actividad, objetivo) antes
+ * de acceder a las tabs principales.
+ *
+ * Mantiene:
+ *   - Loop de startup que distingue pasos críticos vs best-effort.
+ *   - ScreenErrorBoundary.
+ *   - Deep link handling (addwater/:ml).
+ *   - Tema oscuro y SafeAreaProvider.
  */
 import React, { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
@@ -15,6 +21,7 @@ import { StyleSheet, Linking, Text, ScrollView } from "react-native";
 
 import { RootNavigator } from "@/navigation/RootNavigator";
 import { useSettingsStore } from "@/store/settingsStore";
+import { OnboardingScreen } from "@/modules/onboarding/OnboardingScreen";
 import { openDatabase } from "@/modules/persistence/db";
 import { initDeviceIdentity } from "@/modules/cloud/deviceIdentity";
 import { getSupabase, pingDevicePresence } from "@/modules/cloud/supabaseClient";
@@ -61,6 +68,7 @@ class ScreenErrorBoundary extends React.Component<
 
 export default function App() {
   const loadSettings = useSettingsStore((s) => s.loadFromStorage);
+  const onboardingCompleted = useSettingsStore((s) => s.onboardingCompleted);
   const [startupError, setStartupError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -137,6 +145,21 @@ export default function App() {
         <Text style={styles.errorTitle}>Error al iniciar la app:</Text>
         <Text style={styles.errorMsg}>{startupError}</Text>
       </ScrollView>
+    );
+  }
+
+  // Si el usuario no ha completado el onboarding, mostramos el wizard.
+  // El RootNavigator completo (con NavigationContainer) se carga solo después.
+  if (!onboardingCompleted) {
+    return (
+      <ScreenErrorBoundary>
+        <GestureHandlerRootView style={styles.root}>
+          <SafeAreaProvider>
+            <StatusBar style="light" />
+            <OnboardingScreen />
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </ScreenErrorBoundary>
     );
   }
 

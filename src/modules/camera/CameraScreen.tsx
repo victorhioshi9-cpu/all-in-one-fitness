@@ -1,7 +1,7 @@
 /**
- * CameraScreen.tsx (Fase 3)
+ * CameraScreen.tsx (Rediseño v0.4)
  * ----------------------------------------------------------------------------
- * Integración completa del Coach AI:
+ * Integración completa del Coach AI con:
  *   - Skeleton overlay Skia (puntitos color por fase) [Fase 1]
  *   - RepStateMachine + FaultDetector [Fase 1]
  *   - Calibración 3s [Fase 1]
@@ -11,11 +11,28 @@
  *   - Grabación de serie con rep_markers [Fase 3]
  *   - Ghost Pacer (replay post-serie) [Fase 3]
  *   - Audio coach con ducking (TTS español) [Fase 3]
+ *
+ * BUG FIX (v0.4): `phaseShared` y `faultLandmarksShared` se creaban con
+ *   `useRef<any>({ value: ... })`, pero `SkeletonOverlay` los consume como
+ *   `SharedValue<T>` accediendo a `.value` directamente. Esto causaba
+ *   `undefined.includes(idx)` y crash al iniciar la cámara.
+ *   Sustituido por `useSharedValue<T>(initialValue)` de react-native-reanimated
+ *   y actualizadas todas las lecturas/escrituras (.current.value -> .value).
+ *
+ * Rediseño del selector de ejercicio (v0.4):
+ *   - ScrollView vertical con cabeceras por categoría (free_weight, machine,
+ *     calisthenic, cardio) y grid de 2 columnas dentro de cada categoría.
+ *   - Tarjetas con emoji grande, nombre, músculo primario y franja de color
+ *     por categoría a la izquierda.
+ *   - Steppers de peso/reps con touch targets grandes (>= 56px).
+ *   - Hint de calibración + VBT visible antes de iniciar cámara.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, useWindowDimensions, ActivityIndicator
+  View, Text, StyleSheet, Pressable, useWindowDimensions, ActivityIndicator,
+  ScrollView, FlatList
 } from "react-native";
+import { useSharedValue } from "react-native-reanimated";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useKeepAwake } from "expo-keep-awake";
 
@@ -41,6 +58,17 @@ import { audioCoach } from "@/modules/audioCoach/audioCoach";
 
 type Mode = "select_exercise" | "calibrating" | "tracking" | "replay";
 
+// Categorías en orden visual fijo para el selector
+type ExerciseCategory = ExercisePreset["category"];
+const CATEGORY_ORDER: ExerciseCategory[] = ["free_weight", "machine", "cable", "calisthenic", "cardio"];
+const CATEGORY_META: Record<ExerciseCategory, { label: string; emoji: string; color: string }> = {
+  free_weight: { label: "Pesas libres", emoji: "🏋️", color: colors.accent },
+  machine: { label: "Máquinas", emoji: "🛠️", color: colors.concentric },
+  cable: { label: "Poleas / cables", emoji: "🔗", color: colors.bottom },
+  calisthenic: { label: "Calistenia", emoji: "🤸", color: colors.ok },
+  cardio: { label: "Cardio", emoji: "🔥", color: colors.error }
+};
+
 export const CameraScreen: React.FC = () => {
   useKeepAwake();
   const { width, height } = useWindowDimensions();
@@ -61,8 +89,9 @@ export const CameraScreen: React.FC = () => {
   const [replayData, setReplayData] = useState<{ videoUri: string; poseFrames: any[]; repMarkers: any[] } | null>(null);
   const [recordingEnabled, setRecordingEnabled] = useState(true);
 
-  const phaseShared = useRef<any>({ value: "IDLE" });
-  const faultLandmarksShared = useRef<any>({ value: [] });
+  // BUG FIX: antes useRef<any>({value: ...}) -> ahora SharedValue real.
+  const phaseShared = useSharedValue<RepPhase>("IDLE");
+  const faultLandmarksShared = useSharedValue<number[]>([]);
   const stateMachineRef = useRef<RepStateMachine | null>(null);
   const cameraRef = useRef<any>(null);
   const setStartTimeRef = useRef<number>(0);
@@ -81,7 +110,10 @@ export const CameraScreen: React.FC = () => {
     setPhase("IDLE");
     setFaults([]);
     setLastRep(null);
-  }, [preset]);
+    // Resetea SharedValues al cambiar de ejercicio
+    phaseShared.value = "IDLE";
+    faultLandmarksShared.value = [];
+  }, [preset, vbt, asym, phaseShared, faultLandmarksShared]);
 
   const onPose = useCallback((pose: any) => {
     setLatestPose(pose);
@@ -130,14 +162,16 @@ export const CameraScreen: React.FC = () => {
       lmIdxs.forEach((i) => faultLmSet.add(i));
     });
     asym.flaggedLandmarks.forEach((i) => faultLmSet.add(i));
-    faultLandmarksShared.current.value = Array.from(faultLmSet);
-    phaseShared.current.value = sm.getPhase();
+
+    // BUG FIX: escritura directa sobre el SharedValue (sin .current).
+    faultLandmarksShared.value = Array.from(faultLmSet);
+    phaseShared.value = sm.getPhase();
 
     // Captura de frames para replay
     if (recorder.isRecording) {
       recorder.capturePoseFrame(pose);
     }
-  }, [mode, preset, targetReps, vbt, asym, recorder]);
+  }, [mode, preset, targetReps, vbt, asym, recorder, phaseShared, faultLandmarksShared]);
 
   const { poseShared } = usePoseFrameProcessor(onPose);
   const thermal = useCameraThermalGuard(30);
@@ -217,8 +251,8 @@ export const CameraScreen: React.FC = () => {
 
       <SkeletonOverlay
         poseShared={poseShared}
-        phaseShared={phaseShared as any}
-        faultLandmarksShared={faultLandmarksShared as any}
+        phaseShared={phaseShared}
+        faultLandmarksShared={faultLandmarksShared}
         width={width}
         height={height}
       />
@@ -350,69 +384,182 @@ export const CameraScreen: React.FC = () => {
 };
 
 // ============================================================================
-// Selector de ejercicio (extends Fase 1 con grabación toggle)
+// Selector de ejercicio (rediseñado v0.4)
+// - ScrollView vertical con cabeceras por categoría.
+// - Grid de 2 columnas dentro de cada sección (FlatList anidado).
+// - Tarjetas con emoji grande + nombre + músculo + franja de color.
+// - Steppers grandes (>= 56px de touch target).
 // ============================================================================
-const ExerciseSelector: React.FC<any> = ({
+interface ExerciseSelectorProps {
+  preset: ExercisePreset;
+  onSelect: (p: ExercisePreset) => void;
+  targetReps: number;
+  onTargetReps: (n: number) => void;
+  weight: number;
+  onWeight: (n: number) => void;
+  recordingEnabled: boolean;
+  onToggleRecording: (b: boolean) => void;
+  onStart: () => void;
+}
+
+const ExerciseSelector: React.FC<ExerciseSelectorProps> = ({
   preset, onSelect, targetReps, onTargetReps, weight, onWeight,
   recordingEnabled, onToggleRecording, onStart
 }) => {
+  // Agrupa presets por categoría en el orden visual definido.
+  const byCategory = React.useMemo(() => {
+    const all = Object.values(EXERCISE_PRESETS);
+    return CATEGORY_ORDER.map((cat) => ({
+      category: cat,
+      meta: CATEGORY_META[cat],
+      items: all.filter((p) => p.category === cat)
+    })).filter((g) => g.items.length > 0);
+  }, []);
+
   return (
-    <View style={styles.selectorContainer}>
-      <Text style={styles.selectorTitle}>Elige ejercicio</Text>
-      <View style={styles.presetGrid}>
-        {Object.values(EXERCISE_PRESETS).map((p) => (
-          <Pressable
-            key={p.id}
-            style={[styles.presetCard, p.id === preset.id && styles.presetCardActive]}
-            onPress={() => onSelect(p)}
-          >
-            <Text style={[styles.presetName, p.id === preset.id && styles.presetNameActive]}>{p.name}</Text>
-            <Text style={styles.presetMeta}>{p.primaryMuscle}</Text>
-          </Pressable>
-        ))}
+    <ScrollView
+      style={styles.selectorScroll}
+      contentContainerStyle={styles.selectorContainer}
+      showsVerticalScrollIndicator
+    >
+      <Text style={styles.selectorTitle}>Coach AI</Text>
+      <Text style={styles.selectorSubtitle}>Elige ejercicio para iniciar cámara</Text>
+
+      {/* Resumen del ejercicio seleccionado */}
+      <View style={styles.selectedSummaryCard}>
+        <Text style={styles.selectedEmoji}>{preset.emoji}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.selectedName}>{preset.name}</Text>
+          <Text style={styles.selectedMuscle}>{preset.primaryMuscle}</Text>
+        </View>
+        <View style={[styles.selectedStripe, { backgroundColor: CATEGORY_META[preset.category].color }]} />
       </View>
 
+      {/* Steppers grandes */}
       <Text style={styles.sectionLabel}>PESO (kg)</Text>
-      <View style={styles.stepperRow}>
-        <Pressable style={styles.stepBtn} onPress={() => onWeight(Math.max(0, weight - 2.5))}>
-          <Text style={styles.stepBtnText}>- 2.5</Text>
-        </Pressable>
-        <Text style={styles.stepValue}>{weight.toFixed(1)}</Text>
-        <Pressable style={styles.stepBtn} onPress={() => onWeight(weight + 2.5)}>
-          <Text style={styles.stepBtnText}>+ 2.5</Text>
-        </Pressable>
-      </View>
+      <BigStepper
+        onDec={() => onWeight(Math.max(0, +(weight - 2.5).toFixed(1)))}
+        onInc={() => onWeight(+(weight + 2.5).toFixed(1))}
+        stepLabel="2.5"
+        displayValue={weight.toFixed(1)}
+      />
 
       <Text style={styles.sectionLabel}>REPS OBJETIVO</Text>
-      <View style={styles.stepperRow}>
-        <Pressable style={styles.stepBtn} onPress={() => onTargetReps(Math.max(1, targetReps - 1))}>
-          <Text style={styles.stepBtnText}>- 1</Text>
-        </Pressable>
-        <Text style={styles.stepValue}>{targetReps}</Text>
-        <Pressable style={styles.stepBtn} onPress={() => onTargetReps(targetReps + 1)}>
-          <Text style={styles.stepBtnText}>+ 1</Text>
-        </Pressable>
-      </View>
+      <BigStepper
+        onDec={() => onTargetReps(Math.max(1, targetReps - 1))}
+        onInc={() => onTargetReps(targetReps + 1)}
+        stepLabel="1"
+        displayValue={String(targetReps)}
+      />
 
+      {/* Toggle grabación */}
       <Pressable
         style={[styles.toggleRow, recordingEnabled && styles.toggleRowActive]}
         onPress={() => onToggleRecording(!recordingEnabled)}
       >
-        <Text style={styles.toggleLabel}>Grabar serie con overlay</Text>
-        <Text style={styles.toggleValue}>{recordingEnabled ? "ON" : "OFF"}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.toggleLabel}>Grabar serie con overlay</Text>
+          <Text style={styles.toggleSub}>Guarda el video + esqueleto para replay</Text>
+        </View>
+        <View style={[styles.togglePill, recordingEnabled && styles.togglePillActive]}>
+          <Text style={[styles.toggleValue, recordingEnabled && styles.toggleValueActive]}>
+            {recordingEnabled ? "ON" : "OFF"}
+          </Text>
+        </View>
       </Pressable>
 
-      <Text style={styles.hint}>{preset.calibrationHint}</Text>
+      {/* Catálogo por categorías */}
+      <Text style={styles.sectionLabel}>CATÁLOGO</Text>
+      {byCategory.map((group) => (
+        <View key={group.category} style={styles.categoryBlock}>
+          <View style={styles.categoryHeader}>
+            <Text style={styles.categoryEmoji}>{group.meta.emoji}</Text>
+            <Text style={styles.categoryLabel}>{group.meta.label}</Text>
+            <Text style={styles.categoryCount}>{group.items.length}</Text>
+          </View>
+          <FlatList<ExercisePreset>
+            data={group.items}
+            numColumns={2}
+            scrollEnabled={false}
+            keyExtractor={(item: ExercisePreset) => item.id}
+            columnWrapperStyle={styles.gridRow}
+            contentContainerStyle={{ paddingBottom: 0 }}
+            renderItem={({ item }: { item: ExercisePreset }) => {
+              const meta = CATEGORY_META[item.category];
+              const active = item.id === preset.id;
+              return (
+                <Pressable
+                  style={[
+                    styles.presetCard,
+                    active && styles.presetCardActive,
+                    { borderColor: active ? meta.color : colors.dim }
+                  ]}
+                  onPress={() => onSelect(item)}
+                >
+                  <View style={[styles.presetStripe, { backgroundColor: meta.color }]} />
+                  <Text style={styles.presetEmoji}>{item.emoji}</Text>
+                  <Text
+                    style={[styles.presetName, active && { color: meta.color }]}
+                    numberOfLines={2}
+                  >
+                    {item.name}
+                  </Text>
+                  <Text style={styles.presetMeta} numberOfLines={1}>{item.primaryMuscle}</Text>
+                </Pressable>
+              );
+            }}
+          />
+        </View>
+      ))}
+
+      {/* Hint de calibración */}
+      <View style={styles.hintCard}>
+        <Text style={styles.hintEmoji}>🎯</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.hintTitle}>Cómo colocarte</Text>
+          <Text style={styles.hintText}>{preset.calibrationHint}</Text>
+        </View>
+      </View>
       <Text style={styles.hintVbt}>
         VBT: seguirá {preset.id === "squat" ? "la cadera" : "la muñeca"} para medir velocidad y fatiga.
       </Text>
 
       <Pressable style={styles.startBtn} onPress={onStart}>
-        <Text style={styles.startBtnText}>Iniciar cámara</Text>
+        <Text style={styles.startBtnText}>▶ Iniciar cámara</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 };
+
+// ============================================================================
+// Stepper grande (touch target >= 56px)
+// ============================================================================
+const BigStepper: React.FC<{
+  onDec: () => void;
+  onInc: () => void;
+  stepLabel: string;
+  displayValue: string;
+}> = ({ onDec, onInc, stepLabel, displayValue }) => (
+  <View style={styles.stepperRow}>
+    <Pressable
+      style={({ pressed }: { pressed: boolean }) => [styles.stepBtn, pressed && styles.stepBtnPressed]}
+      onPress={onDec}
+      hitSlop={8}
+    >
+      <Text style={styles.stepBtnSign}>−</Text>
+      <Text style={styles.stepBtnLabel}>{stepLabel}</Text>
+    </Pressable>
+    <Text style={styles.stepValue}>{displayValue}</Text>
+    <Pressable
+      style={({ pressed }: { pressed: boolean }) => [styles.stepBtn, pressed && styles.stepBtnPressed]}
+      onPress={onInc}
+      hitSlop={8}
+    >
+      <Text style={styles.stepBtnSign}>+</Text>
+      <Text style={styles.stepBtnLabel}>{stepLabel}</Text>
+    </Pressable>
+  </View>
+);
 
 // ============================================================================
 // Helpers: cargar el mejor "ghost" histórico
@@ -440,10 +587,10 @@ async function loadBestGhost(exerciseId: string): Promise<any[]> {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#08080c", padding: spacing.lg },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, padding: spacing.lg },
   title: { color: colors.bright, fontSize: 22, fontWeight: "700", marginBottom: spacing.lg },
   btn: { backgroundColor: colors.accent, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md },
-  btnText: { color: "#08080c", fontWeight: "800", fontSize: 16 },
+  btnText: { color: colors.bg, fontWeight: "800", fontSize: 16 },
   thermalBadge: {
     position: "absolute", top: spacing.md, right: spacing.md,
     backgroundColor: "rgba(8, 10, 14, 0.85)", paddingHorizontal: spacing.sm, paddingVertical: 4,
@@ -467,46 +614,112 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(245, 158, 11, 0.92)", paddingHorizontal: spacing.md, paddingVertical: 4,
     borderRadius: radius.sm
   },
-  fatigueText: { color: "#08080c", fontWeight: "800", fontSize: 12 },
+  fatigueText: { color: colors.bg, fontWeight: "800", fontSize: 12 },
   asymBadge: {
     position: "absolute", bottom: 290, alignSelf: "center",
     backgroundColor: "rgba(6, 182, 212, 0.92)", paddingHorizontal: spacing.md, paddingVertical: 4,
     borderRadius: radius.sm
   },
-  asymText: { color: "#08080c", fontWeight: "800", fontSize: 12 },
-  // Selector
-  selectorContainer: { flex: 1, backgroundColor: "#08080c", padding: spacing.lg, paddingTop: spacing.xl + 12 },
-  selectorTitle: { color: colors.bright, fontSize: 28, fontWeight: "800", marginBottom: spacing.lg },
-  presetGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginBottom: spacing.lg },
-  presetCard: {
-    flexBasis: "47%", flexGrow: 1, backgroundColor: "rgba(255,255,255,0.04)",
-    borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.dim
+  asymText: { color: colors.bg, fontWeight: "800", fontSize: 12 },
+
+  // --- Selector ---
+  selectorScroll: { flex: 1, backgroundColor: colors.bg },
+  selectorContainer: { padding: spacing.lg, paddingTop: spacing.xl + 12, paddingBottom: spacing.xxl },
+  selectorTitle: { color: colors.bright, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
+  selectorSubtitle: { color: colors.textMuted, fontSize: 14, marginBottom: spacing.lg },
+
+  // Resumen del seleccionado
+  selectedSummaryCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surfaceElevated, borderRadius: radius.lg,
+    padding: spacing.md, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.accent
   },
-  presetCardActive: { borderColor: colors.accent, backgroundColor: "rgba(255,107,53,0.08)" },
-  presetName: { color: colors.bright, fontSize: 16, fontWeight: "700", marginBottom: 4 },
-  presetNameActive: { color: colors.accent },
-  presetMeta: { color: colors.textMuted, fontSize: 12 },
-  sectionLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, marginBottom: spacing.xs, marginTop: spacing.md },
+  selectedEmoji: { fontSize: 36 },
+  selectedName: { color: colors.bright, fontSize: 18, fontWeight: "800" },
+  selectedMuscle: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
+  selectedStripe: { width: 4, height: 36, borderRadius: 2 },
+
+  sectionLabel: {
+    color: colors.textMuted, fontSize: 11, fontWeight: "800",
+    letterSpacing: 1.5, marginBottom: spacing.xs, marginTop: spacing.md
+  },
+
+  // Stepper grande
   stepperRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: "rgba(255,255,255,0.04)", borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    padding: spacing.sm, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.dim
   },
   stepBtn: {
-    backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderRadius: radius.sm, minWidth: 70, alignItems: "center"
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: radius.md, minWidth: 80, minHeight: 56,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm
   },
-  stepBtnText: { color: colors.bright, fontWeight: "700", fontSize: 14 },
-  stepValue: { color: colors.bright, fontSize: 24, fontWeight: "800" },
+  stepBtnPressed: { backgroundColor: colors.accentDim },
+  stepBtnSign: { color: colors.bright, fontSize: 26, fontWeight: "900", lineHeight: 28 },
+  stepBtnLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "700", marginTop: 2 },
+  stepValue: { color: colors.bright, fontSize: 34, fontWeight: "900", fontVariant: ["tabular-nums"] },
+
+  // Toggle grabación
   toggleRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: "rgba(255,255,255,0.04)", borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md,
-    borderWidth: 1, borderColor: colors.dim
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md,
+    marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.dim
   },
   toggleRowActive: { borderColor: colors.accent },
-  toggleLabel: { color: colors.bright, fontSize: 14, fontWeight: "700" },
-  toggleValue: { color: colors.accent, fontSize: 14, fontWeight: "800" },
-  hint: { color: colors.textMuted, fontSize: 13, marginBottom: spacing.xs },
-  hintVbt: { color: colors.concentric, fontSize: 12, marginBottom: spacing.lg },
-  startBtn: { backgroundColor: colors.accent, paddingVertical: spacing.lg, borderRadius: radius.lg, alignItems: "center", marginTop: "auto" },
-  startBtnText: { color: "#08080c", fontSize: 18, fontWeight: "800" }
+  toggleLabel: { color: colors.bright, fontSize: 15, fontWeight: "700" },
+  toggleSub: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  togglePill: {
+    paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.lg,
+    backgroundColor: "rgba(255,255,255,0.06)"
+  },
+  togglePillActive: { backgroundColor: colors.accent },
+  toggleValue: { color: colors.textMuted, fontSize: 13, fontWeight: "800" },
+  toggleValueActive: { color: colors.bg },
+
+  // Categorías
+  categoryBlock: { marginBottom: spacing.lg },
+  categoryHeader: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    marginBottom: spacing.sm
+  },
+  categoryEmoji: { fontSize: 18 },
+  categoryLabel: { color: colors.bright, fontSize: 14, fontWeight: "800", letterSpacing: 0.3 },
+  categoryCount: {
+    color: colors.textMuted, fontSize: 11, fontWeight: "700",
+    backgroundColor: colors.surface, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2,
+    overflow: "hidden"
+  },
+  gridRow: { gap: spacing.sm, marginBottom: spacing.sm },
+
+  // Tarjeta de ejercicio
+  presetCard: {
+    flex: 1, position: "relative",
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    padding: spacing.md, borderWidth: 1, borderColor: colors.dim,
+    minHeight: 110, overflow: "hidden"
+  },
+  presetCardActive: { backgroundColor: "rgba(255,107,53,0.10)" },
+  presetStripe: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
+  presetEmoji: { fontSize: 28, marginBottom: 4 },
+  presetName: { color: colors.bright, fontSize: 14, fontWeight: "700", marginBottom: 2, paddingRight: 4 },
+  presetMeta: { color: colors.textMuted, fontSize: 11, fontWeight: "600" },
+
+  // Hint
+  hintCard: {
+    flexDirection: "row", alignItems: "flex-start", gap: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    padding: spacing.md, borderWidth: 1, borderColor: colors.dim
+  },
+  hintEmoji: { fontSize: 24 },
+  hintTitle: { color: colors.bright, fontSize: 13, fontWeight: "800", marginBottom: 4 },
+  hintText: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
+  hintVbt: { color: colors.concentric, fontSize: 12, marginTop: spacing.sm, marginBottom: spacing.lg },
+
+  startBtn: {
+    backgroundColor: colors.accent, paddingVertical: spacing.lg + 2,
+    borderRadius: radius.lg, alignItems: "center", marginTop: spacing.sm
+  },
+  startBtnText: { color: colors.bg, fontSize: 18, fontWeight: "900", letterSpacing: 0.5 }
 });
