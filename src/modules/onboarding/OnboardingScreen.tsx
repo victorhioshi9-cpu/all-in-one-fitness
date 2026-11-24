@@ -158,6 +158,25 @@ export const OnboardingScreen: React.FC = () => {
               </Text>
             </Pressable>
           </View>
+
+          {/* Botón saltar (completar rápido con valores por defecto) */}
+          <Pressable
+            style={styles.skipBtn}
+            onPress={() => {
+              setOnboardingData({
+                gender: "male",
+                ageYears: 28,
+                heightCm: 170,
+                weightKg: 70,
+                activityLevel: "moderate",
+                goal: "maintain"
+              });
+              setOnboardingCompleted(true);
+            }}
+            hitSlop={8}
+          >
+            <Text style={styles.skipBtnText}>Saltar (usar valores por defecto) →</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -531,5 +550,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg, alignItems: "center", justifyContent: "center"
   },
   navNextDisabled: { backgroundColor: colors.dim },
-  navNextText: { color: colors.bg, fontSize: 17, fontWeight: "900", letterSpacing: 0.3 }
+  navNextText: { color: colors.bg, fontSize: 17, fontWeight: "900", letterSpacing: 0.3 },
+  skipBtn: {
+    alignSelf: "center",
+    marginTop: spacing.lg,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md
+  },
+  skipBtnText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+    textDecorationLine: "underline"
+  }
 });

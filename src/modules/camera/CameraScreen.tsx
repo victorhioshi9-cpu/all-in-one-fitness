@@ -1,133 +1,289 @@
 /**
- * CameraScreen.tsx — STUB MÍNIMO DE DIAGNÓSTICO (v0.3.3-emergency)
+ * CameraScreen.tsx — Versión funcional simple (v0.3.4)
  * ----------------------------------------------------------------------------
- * Este es un stub temporal que SOLO importa React Native básico.
- * NO importa react-native-reanimated, react-native-vision-camera, hooks de
- * pose, ni nada que pueda estar bloqueando los toques.
+ * Versión sin react-native-reanimated, sin Skia overlay, sin pose detection.
+ * Solo preview de cámara + selector de ejercicio + steppers grandes.
  *
- * Objetivo: aislar el bug "no se puede tocar nada". Si con este stub los
- * botones SÍ responden y las tabs SÍ cambian, sabremos que el problema está
- * en las dependencias originales de CameraScreen (reanimated/vision-camera/
- * pose hooks) y podremos reactivarlas incrementalmente.
+ * Razón: la versión completa con useSharedValue + SkeletonOverlay rompía los
+ * toques en toda la app. Esta versión usa solo React Native básico y
+ * react-native-vision-camera (sin frame processor).
  *
- * Si con este stub los toques SIGUEN sin funcionar, el problema está en
- * App.tsx, RootNavigator, o gesture-handler global.
- *
- * Lo que hace este stub:
- *   1) Muestra el estado del permiso de cámara (sin pedirlo automáticamente).
- *   2) Botón "Conceder acceso" → usa Linking.openSettings() (NO usa
- *      cameraPerm.requestPermission() para evitar dependencias de vision-camera).
- *   3) Botón "Probar toque" → muestra un contador al pulsar para verificar
- *      que los toques funcionan.
- *
- * Para restaurar el CameraScreen completo, renombra CameraScreen.tsx.backup
- * de vuelta a CameraScreen.tsx.
+ * Cuando se quiera reactivar pose detection, hay que diagnosticar por qué
+ * useSharedValue + Skia Canvas + frame processor rompen gesture handling.
  */
-import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable, Linking, Alert } from "react-native";
+import React, { useState, useRef } from "react";
+import {
+  View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
+  ActivityIndicator, Linking, Alert
+} from "react-native";
+import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
+import { useKeepAwake } from "expo-keep-awake";
 
+import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
 
+type Mode = "select_exercise" | "tracking";
+
+type ExerciseCategory = ExercisePreset["category"];
+const CATEGORY_ORDER: ExerciseCategory[] = ["free_weight", "machine", "cable", "calisthenic", "cardio"];
+const CATEGORY_META: Record<ExerciseCategory, { label: string; emoji: string; color: string }> = {
+  free_weight: { label: "Pesas libres", emoji: "🏋️", color: colors.accent },
+  machine: { label: "Máquinas", emoji: "🛠️", color: colors.concentric },
+  cable: { label: "Poleas / cables", emoji: "🔗", color: colors.bottom },
+  calisthenic: { label: "Calistenia", emoji: "🤸", color: colors.ok },
+  cardio: { label: "Cardio", emoji: "🔥", color: colors.error }
+};
+
 export const CameraScreen: React.FC = () => {
-  const [touchCount, setTouchCount] = useState(0);
+  useKeepAwake();
+  const { width, height } = useWindowDimensions();
+  const cameraPerm = useCameraPermission();
+  const device = useCameraDevice("back");
 
-  const handleConceder = () => {
-    Alert.alert(
-      "Permiso de cámara",
-      "Para conceder el permiso, abre Ajustes → Aplicaciones → All-in-One Fitness → Permisos → Cámara → Permitir.",
-      [
-        { text: "Cancelar", style: "cancel" },
-        {
-          text: "Abrir Ajustes",
-          style: "default",
-          onPress: () => Linking.openSettings().catch(() => {})
-        }
-      ]
+  const [mode, setMode] = useState<Mode>("select_exercise");
+  const [preset, setPreset] = useState<ExercisePreset>(EXERCISE_PRESETS.squat);
+  const [targetReps, setTargetReps] = useState(8);
+  const [weight, setWeight] = useState(40);
+  const [count, setCount] = useState(0);
+  const cameraRef = useRef<any>(null);
+
+  // --- Manejador de permiso de cámara ---
+  const handleRequestCameraPermission = async () => {
+    try {
+      const granted = await cameraPerm.requestPermission();
+      if (!granted) {
+        Alert.alert(
+          "Permiso de cámara bloqueado",
+          "Has denegado el permiso de cámara varias veces. Android ya no muestra el diálogo.\n\n" +
+          "Para concederlo, abre Ajustes → Aplicaciones → All-in-One Fitness → Permisos → Cámara → Permitir.",
+          [
+            { text: "Cancelar", style: "cancel" },
+            { text: "Abrir Ajustes", style: "default", onPress: () => Linking.openSettings().catch(() => {}) }
+          ]
+        );
+      }
+    } catch (err: any) {
+      Alert.alert(
+        "No se pudo pedir el permiso",
+        "Error: " + (err?.message ?? String(err)),
+        [
+          { text: "OK", style: "default" },
+          { text: "Abrir Ajustes", style: "default", onPress: () => Linking.openSettings().catch(() => {}) }
+        ]
+      );
+    }
+  };
+
+  // --- Render: sin permiso ---
+  if (!cameraPerm.hasPermission) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.title}>Permiso de cámara requerido</Text>
+        <Text style={styles.hint}>
+          La cámara se usa solo dentro de esta app para detectar tu postura en
+          tiempo real. El video nunca sale del dispositivo.
+        </Text>
+        <Pressable style={styles.btn} onPress={handleRequestCameraPermission} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <Text style={styles.btnText}>Conceder acceso</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.btn, { backgroundColor: "rgba(255,255,255,0.06)", marginTop: spacing.sm }]}
+          onPress={() => Linking.openSettings().catch(() => {})}
+        >
+          <Text style={[styles.btnText, { color: colors.bright }]}>Abrir Ajustes</Text>
+        </Pressable>
+      </View>
     );
-  };
+  }
 
-  const handleTestTouch = () => {
-    setTouchCount((c) => c + 1);
-  };
+  // --- Render: sin dispositivo ---
+  if (!device) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={colors.accent} />
+        <Text style={{ color: colors.textMuted, marginTop: spacing.md }}>Buscando cámara…</Text>
+      </View>
+    );
+  }
 
+  // --- Render: selector de ejercicio ---
+  if (mode === "select_exercise") {
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.selectorContainer}>
+        <Text style={styles.selectorTitle}>Coach AI</Text>
+        <Text style={styles.selectorSubtitle}>
+          Selecciona un ejercicio. La cámara abrirá en modo preview (la detección
+          de pose se reactivará en una próxima versión).
+        </Text>
+
+        {/* Steppers grandes */}
+        <View style={styles.stepperRow}>
+          <View style={styles.stepperBox}>
+            <Text style={styles.stepperLabel}>Peso (kg)</Text>
+            <View style={styles.stepperControls}>
+              <Pressable style={styles.stepperBtn} onPress={() => setWeight((w) => Math.max(0, w - 2.5))}>
+                <Text style={styles.stepperBtnText}>−</Text>
+              </Pressable>
+              <Text style={styles.stepperValue}>{weight}</Text>
+              <Pressable style={styles.stepperBtn} onPress={() => setWeight((w) => w + 2.5)}>
+                <Text style={styles.stepperBtnText}>+</Text>
+              </Pressable>
+            </View>
+          </View>
+          <View style={styles.stepperBox}>
+            <Text style={styles.stepperLabel}>Reps objetivo</Text>
+            <View style={styles.stepperControls}>
+              <Pressable style={styles.stepperBtn} onPress={() => setTargetReps((r) => Math.max(1, r - 1))}>
+                <Text style={styles.stepperBtnText}>−</Text>
+              </Pressable>
+              <Text style={styles.stepperValue}>{targetReps}</Text>
+              <Pressable style={styles.stepperBtn} onPress={() => setTargetReps((r) => r + 1)}>
+                <Text style={styles.stepperBtnText}>+</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        {/* Categorías con ejercicios */}
+        {CATEGORY_ORDER.map((cat) => {
+          const meta = CATEGORY_META[cat];
+          const exercises = Object.values(EXERCISE_PRESETS).filter((p) => p.category === cat);
+          if (exercises.length === 0) return null;
+          return (
+            <View key={cat} style={styles.categoryBlock}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryEmoji}>{meta.emoji}</Text>
+                <Text style={styles.categoryLabel}>{meta.label}</Text>
+              </View>
+              <View style={styles.exGrid}>
+                {exercises.map((ex) => {
+                  const selected = preset.id === ex.id;
+                  return (
+                    <Pressable
+                      key={ex.id}
+                      style={[styles.exCard, selected && { borderColor: meta.color, borderWidth: 2 }]}
+                      onPress={() => setPreset(ex)}
+                    >
+                      <View style={[styles.exStripe, { backgroundColor: meta.color }]} />
+                      <Text style={styles.exEmoji}>{ex.emoji ?? "🏋️"}</Text>
+                      <Text style={styles.exName}>{ex.name}</Text>
+                      <Text style={styles.exMuscle}>{ex.primaryMuscle ?? ""}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+
+        <Pressable
+          style={[styles.btn, { marginTop: spacing.lg, alignSelf: "stretch" }]}
+          onPress={() => {
+            setCount(0);
+            setMode("tracking");
+          }}
+        >
+          <Text style={styles.btnText}>Iniciar cámara</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  }
+
+  // --- Render: tracking (preview de cámara) ---
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Coach AI</Text>
-      <Text style={styles.subtitle}>Modo diagnóstico</Text>
+    <View style={styles.trackingContainer}>
+      <Camera
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={mode === "tracking"}
+        photo={false}
+        video={false}
+        audio={false}
+      />
+      {/* HUD mínimo */}
+      <View style={styles.hudTop}>
+        <Pressable style={styles.hudBtn} onPress={() => setMode("select_exercise")}>
+          <Text style={styles.hudBtnText}>← Atrás</Text>
+        </Pressable>
+        <Text style={styles.hudTitle}>{preset.emoji} {preset.name}</Text>
+        <View style={{ width: 70 }} />
+      </View>
 
-      <Text style={styles.hint}>
-        Esta es una versión minimalista de la pantalla de Coach para aislar el
-        bug "no se puede tocar nada". Si puedes pulsar los botones de abajo y
-        cambiar de pestaña en la barra inferior, el problema estaba en las
-        dependencias originales de CameraScreen.
-      </Text>
-
-      <Pressable
-        style={styles.btnPrimary}
-        onPress={handleTestTouch}
-        hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-      >
-        <Text style={styles.btnPrimaryText}>Probar toque (contador: {touchCount})</Text>
-      </Pressable>
-
-      <Pressable
-        style={[styles.btnPrimary, { backgroundColor: "rgba(255,255,255,0.08)", marginTop: spacing.md }]}
-        onPress={handleConceder}
-        hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-      >
-        <Text style={[styles.btnPrimaryText, { color: colors.bright }]}>Conceder acceso a cámara</Text>
-      </Pressable>
-
-      <Text style={styles.footer}>
-        Toques registrados: {touchCount}
-      </Text>
+      <View style={styles.hudBottom}>
+        <View style={styles.hudStat}>
+          <Text style={styles.hudStatLabel}>Reps</Text>
+          <Text style={styles.hudStatValue}>{count}</Text>
+          <View style={styles.hudStatRow}>
+            <Pressable style={styles.hudStepperBtn} onPress={() => setCount((c) => Math.max(0, c - 1))}>
+              <Text style={styles.hudStepperText}>−</Text>
+            </Pressable>
+            <Pressable style={styles.hudStepperBtn} onPress={() => setCount((c) => c + 1)}>
+              <Text style={styles.hudStepperText}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+        <View style={styles.hudStat}>
+          <Text style={styles.hudStatLabel}>Peso</Text>
+          <Text style={styles.hudStatValue}>{weight} kg</Text>
+        </View>
+        <View style={styles.hudStat}>
+          <Text style={styles.hudStatLabel}>Objetivo</Text>
+          <Text style={styles.hudStatValue}>{targetReps}</Text>
+        </View>
+      </View>
     </View>
   );
 };
 
+// ============================================================================
+// Styles
+// ============================================================================
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-    padding: spacing.lg,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  title: {
-    color: colors.bright,
-    fontSize: 28,
-    fontWeight: "800",
-    marginBottom: spacing.xs
-  },
-  subtitle: {
-    color: colors.textMuted,
-    fontSize: 14,
-    marginBottom: spacing.xl
-  },
-  hint: {
-    color: colors.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    marginBottom: spacing.xl,
-    lineHeight: 19,
-    paddingHorizontal: spacing.md
-  },
-  btnPrimary: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    minWidth: 240,
-    alignItems: "center"
-  },
-  btnPrimaryText: {
-    color: colors.bg,
-    fontWeight: "800",
-    fontSize: 15
-  },
-  footer: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: spacing.xl
-  }
+  scroll: { flex: 1, backgroundColor: colors.bg },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, padding: spacing.lg },
+  title: { color: colors.bright, fontSize: 22, fontWeight: "700", marginBottom: spacing.lg },
+  hint: { color: colors.textMuted, fontSize: 13, textAlign: "center", marginBottom: spacing.lg, paddingHorizontal: spacing.lg, lineHeight: 19 },
+  btn: { backgroundColor: colors.accent, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, alignItems: "center" },
+  btnText: { color: colors.bg, fontWeight: "800", fontSize: 16 },
+
+  // Selector
+  selectorContainer: { padding: spacing.lg, paddingTop: spacing.xl + 12, paddingBottom: spacing.xxl },
+  selectorTitle: { color: colors.bright, fontSize: 28, fontWeight: "800", marginBottom: spacing.xs },
+  selectorSubtitle: { color: colors.textMuted, fontSize: 14, marginBottom: spacing.lg, lineHeight: 19 },
+
+  stepperRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg },
+  stepperBox: { flex: 1, backgroundColor: colors.bgCard, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim },
+  stepperLabel: { color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm, textAlign: "center" },
+  stepperControls: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.md },
+  stepperBtn: { backgroundColor: colors.accent, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  stepperBtnText: { color: colors.bg, fontSize: 22, fontWeight: "900" },
+  stepperValue: { color: colors.bright, fontSize: 22, fontWeight: "800", minWidth: 50, textAlign: "center" },
+
+  categoryBlock: { marginBottom: spacing.lg },
+  categoryHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+  categoryEmoji: { fontSize: 18 },
+  categoryLabel: { color: colors.bright, fontSize: 16, fontWeight: "700" },
+
+  exGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  exCard: { width: "47%", backgroundColor: colors.bgCard, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, position: "relative", overflow: "hidden" },
+  exStripe: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
+  exEmoji: { fontSize: 28, marginBottom: spacing.xs },
+  exName: { color: colors.bright, fontSize: 14, fontWeight: "700", marginBottom: 2 },
+  exMuscle: { color: colors.textMuted, fontSize: 11 },
+
+  // Tracking
+  trackingContainer: { flex: 1, backgroundColor: "#000" },
+  hudTop: { position: "absolute", top: 40, left: 12, right: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  hudBtn: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim },
+  hudBtnText: { color: colors.bright, fontWeight: "700", fontSize: 13 },
+  hudTitle: { color: colors.bright, fontSize: 16, fontWeight: "800", backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
+
+  hudBottom: { position: "absolute", bottom: 40, left: 12, right: 12, flexDirection: "row", gap: spacing.sm, justifyContent: "space-around" },
+  hudStat: { backgroundColor: "rgba(8,10,14,0.85)", padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, alignItems: "center", minWidth: 90 },
+  hudStatLabel: { color: colors.textMuted, fontSize: 11, marginBottom: 4 },
+  hudStatValue: { color: colors.bright, fontSize: 24, fontWeight: "900" },
+  hudStatRow: { flexDirection: "row", gap: 6, marginTop: 6 },
+  hudStepperBtn: { backgroundColor: colors.accent, width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  hudStepperText: { color: colors.bg, fontSize: 18, fontWeight: "900" }
 });

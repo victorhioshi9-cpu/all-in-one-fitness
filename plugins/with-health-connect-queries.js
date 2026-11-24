@@ -86,6 +86,81 @@ module.exports = function withHealthConnectQueries(config) {
       console.log("[with-hc-queries] añadido intent VIEW_PERMISSION_USAGE+HEALTH_PERMISSIONS");
     }
 
+    // --- 4) <activity-alias> dentro de <application> para Android 14+ ---
+    // Sin este activity-alias, al llamar requestPermission() la app crashea
+    // con ActivityNotFoundException porque HC intenta lanzar una actividad
+    // que no existe. El alias redirige a MainActivity.
+    const application = $.application?.[0];
+    if (application) {
+      application["activity-alias"] = application["activity-alias"] || [];
+
+      const hasPermissionAlias = application["activity-alias"].some(
+        (a) => a?.$?.["android:name"] === "ViewPermissionUsageActivity"
+      );
+
+      if (!hasPermissionAlias) {
+        // Buscar el nombre de la actividad principal (MainActivity) del primer
+        // <activity> con MAIN/LAUNCHER intent-filter.
+        let mainActivityName = ".MainActivity"; // default sensible
+        const activities = application.activity || [];
+        for (const act of activities) {
+          const intentFilters = act["intent-filter"] || [];
+          for (const f of intentFilters) {
+            const categories = (f.category || []).map((c) => c?.$?.["android:name"]);
+            const actions = (f.action || []).map((a) => a?.$?.["android:name"]);
+            if (
+              actions.includes("android.intent.action.MAIN") &&
+              categories.includes("android.intent.category.LAUNCHER")
+            ) {
+              mainActivityName = act?.$?.["android:name"] || mainActivityName;
+              break;
+            }
+          }
+        }
+
+        application["activity-alias"].push({
+          $: {
+            "android:name": "ViewPermissionUsageActivity",
+            "android:exported": "true",
+            "android:targetActivity": mainActivityName,
+            "android:permission": "android.permission.START_VIEW_PERMISSION_USAGE"
+          },
+          "intent-filter": [
+            {
+              action: [{ $: { "android:name": "android.intent.action.VIEW_PERMISSION_USAGE" } }],
+              category: [{ $: { "android:name": "android.intent.category.HEALTH_PERMISSIONS" } }]
+            }
+          ]
+        });
+        console.log(
+          `[with-hc-queries] añadido <activity-alias ViewPermissionUsageActivity> targetActivity=${mainActivityName}`
+        );
+      }
+
+      // --- 5) Intent-filter ACTION_SHOW_PERMISSIONS_RATIONALE en MainActivity ---
+      // Para Android 13-, el rationale debe estar en la actividad principal.
+      const activities = application.activity || [];
+      for (const act of activities) {
+        const name = act?.$?.["android:name"];
+        if (!name) continue;
+        // Si es la MainActivity (por convención de Expo RN)
+        if (name.endsWith("MainActivity")) {
+          act["intent-filter"] = act["intent-filter"] || [];
+          const hasRationale = (act["intent-filter"] || []).some((f) => {
+            const actions = (f.action || []).map((a) => a?.$?.["android:name"]);
+            return actions.includes("androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE");
+          });
+          if (!hasRationale) {
+            act["intent-filter"].push({
+              action: [{ $: { "android:name": "androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" } }]
+            });
+            console.log(`[with-hc-queries] añadido intent-filter rationale en ${name}`);
+          }
+          break;
+        }
+      }
+    }
+
     return cfg;
   });
 };
