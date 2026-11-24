@@ -8,7 +8,6 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
-import androidx.camera.core.ImageProxy
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableArray
@@ -22,22 +21,36 @@ import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
-import com.mrousavy.camera.frameprocessor.Frame
-import com.mrousavy.camera.frameprocessor.FrameProcessorPlugin
+import com.mrousavy.camera.core.types.Orientation
+import com.mrousavy.camera.frameprocessors.Frame
+import com.mrousavy.camera.frameprocessors.FrameProcessorPlugin
+import com.mrousavy.camera.frameprocessors.FrameProcessorPluginRegistry
+import com.mrousavy.camera.frameprocessors.VisionCameraProxy
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * PoseLandmarkerPlugin
  * ----------------------------------------------------------------------------
- * Plugin nativo de VisionCamera (v4) que invoca MediaPipe PoseLandmarker sobre
+ * Plugin nativo de VisionCamera (v4.5) que invoca MediaPipe PoseLandmarker sobre
  * cada frame de la cámara y devuelve los 33 landmarks al hilo JS en el formato
  * esperado por [usePoseFrameProcessor.ts] y [SkeletonOverlay.tsx].
  *
- * Registro: se carga vía [PoseLandmarkerPluginPackage] + `VisionCameraProxy.registerPlugin`
+ * Registro: se carga vía [PoseLandmarkerPluginPackage] + `FrameProcessorPluginRegistry.addFrameProcessorPlugin`
  * desde MainApplication.kt (lo hace automáticamente el config plugin `with-native-pose.js`).
+ *
+ * API VisionCamera v4.5:
+ *   - FrameProcessorPlugin es una clase abstracta Java (no Kotlin) con:
+ *       public abstract Object callback(Frame frame, Map<String, Object> params)
+ *     NO es ReadableMap. Es un Map<String, Object> estándar de Java.
+ *   - Frame tiene getters Java: getImage() devuelve android.media.Image,
+ *     getImageProxy() devuelve androidx.camera.core.ImageProxy,
+ *     getOrientation() devuelve Orientation enum (NO Int),
+ *     getTimestamp() devuelve long (ms).
+ *   - Para registrar: FrameProcessorPluginRegistry.addFrameProcessorPlugin(name, initializer)
+ *     donde initializer es un lambda que recibe (VisionCameraProxy, Map<String,Object>) y
+ *     devuelve una nueva instancia del plugin.
  *
  * - Modelo: `assets/pose_landmarker.task` (descargado en prebuild).
  * - Delegate: GPU si está disponible, si no CPU.
@@ -56,7 +69,7 @@ import java.util.concurrent.atomic.AtomicReference
  * se crea perezosamente en el primer frame y se cachea en un AtomicReference para
  * thread-safety (VisionCamera puede llamar al callback desde diferentes hilos).
  */
-class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin("poseLandmarker") {
+class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin() {
 
   companion object {
     private const val TAG = "PoseLandmarkerPlugin"
@@ -70,9 +83,11 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
   // PoseLandmarker es thread-safe para detección pero la creación es costosa.
   // Lo inicializamos lazy y lo cacheamos; el AtomicReference protege la asignación.
   private val landmarkerRef = AtomicReference<PoseLandmarker?>(null)
-  // ReusableBitmap para no hacer alloc en cada frame (mediaPipe no retiene la imagen
-  // tras detect(); es seguro reutilizar siempre que llamemos a detect() síncrono).
-  @Volatile private var lastBitmap: Bitmap? = null
+
+  // Cache del último resultado de MediaPipe (llamada async vía ResultListener).
+  private val lastResultRef = AtomicReference<PoseLandmarkerResult?>(null)
+  // Timestamp del último frame enviado a MediaPipe (para detectar frames descartados).
+  @Volatile private var lastSentTimestampMs: Long = -1L
 
   /** Crea (lazy) o devuelve el PoseLandmarker cacheado. */
   @Synchronized
@@ -81,13 +96,7 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     return try {
       val baseOptions = BaseOptions.builder()
         .setModelAssetPath(MODEL_PATH)
-        .setDelegate(try {
-          // Preferimos GPU. Si la dispositivo no tiene soporte, MediaPipe lanzará
-          // y capturamos abajo para caer a CPU.
-          Delegate.GPU
-        } catch (e: NoClassDefFoundError) {
-          Delegate.CPU
-        })
+        .setDelegate(tryDelegateGpu())
         .build()
 
       val options = PoseLandmarker.PoseLandmarkerOptions.builder()
@@ -109,7 +118,7 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
 
       val landmarker = PoseLandmarker.createFromOptions(context, options)
       landmarkerRef.set(landmarker)
-      Log.i(TAG, "PoseLandmarker creado OK (delegate=${if (isGpu) "GPU" else "CPU"})")
+      Log.i(TAG, "PoseLandmarker creado OK (delegate=${if (isGpu()) "GPU" else "CPU"})")
       landmarker
     } catch (e: Throwable) {
       Log.e(TAG, "No se pudo crear PoseLandmarker (GPU falló, intentando CPU)", e)
@@ -139,26 +148,41 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     }
   }
 
-  private val isGpu: Boolean
-    get() = try { Delegate.GPU; true } catch (e: NoClassDefFoundError) { false }
+  /**
+   * Intenta obtener Delegate.GPU. Si la clase Delegate no está completamente
+   * disponible (algunas versiones de MediaPipe), cae a CPU.
+   */
+  private fun tryDelegateGpu(): Delegate {
+    return try {
+      Delegate.GPU
+    } catch (e: NoClassDefFoundError) {
+      Log.w(TAG, "Delegate.GPU no disponible, usando CPU", e)
+      Delegate.CPU
+    }
+  }
 
-  // Cache del último resultado de MediaPipe (llamada async vía ResultListener).
-  private val lastResultRef = AtomicReference<PoseLandmarkerResult?>(null)
-  // Timestamp del último frame enviado a MediaPipe (para detectar frames descartados).
-  @Volatile private var lastSentTimestampMs: Long = -1L
+  private fun isGpu(): Boolean = try { Delegate.GPU; true } catch (e: NoClassDefFoundError) { false }
 
   /**
    * Callback principal invocado por VisionCamera por cada frame.
    * Debe terminar rápido (< 16 ms idealmente) para no perder FPS en el preview.
+   *
+   * ATENCIÓN: VisionCamera v4.5 pasa params como Map<String, Object> (no ReadableMap).
+   * Si recibes un ReadableMap aquí, no compilará. Esta es la firma correcta.
    */
-  override fun callback(frame: Frame, params: ReadableMap): Any? {
+  override fun callback(frame: Frame, params: Map<String, Any>?): Any? {
     val landmarker = getOrCreateLandmarker() ?: run {
       // Si no hay landmarker (p.ej. modelo no encontrado), devolvemos "no detectado"
       // en lugar de crashear, para que la app siga abierta.
       return buildEmptyResult(System.currentTimeMillis())
     }
 
-    val timestampMs = frame.timestamp.coerceAtLeast(0L)
+    val timestampMs = try {
+      frame.timestamp.coerceAtLeast(0L)
+    } catch (e: Exception) {
+      System.currentTimeMillis()
+    }
+
     if (timestampMs == lastSentTimestampMs) {
       // Frame duplicado (a veces VisionCamera envía el mismo ts en secuencias rápidas)
       return lastResultRef.get()?.let { buildResultMap(it, timestampMs) } ?: buildEmptyResult(timestampMs)
@@ -187,17 +211,30 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
   }
 
   /**
-   * Convierte un Frame de VisionCamera (YUV_420_888 normalmente) en un MPImage
-   * basado en Bitmap. Usamos YuvImage + BitmapFactory para no depender de RenderScript
-   * (deprecated en API 31+).
+   * Convierte un Frame de VisionCamera (ImageProxy YUV_420_888 normalmente) en un
+   * MPImage basado en Bitmap.
+   *
+   * En VisionCamera v4.5:
+   *   - frame.imageProxy -> androidx.camera.core.ImageProxy (no es nullable aquí)
+   *   - frame.image -> android.media.Image (puede lanzar FrameInvalidError si se cerró)
+   *   - frame.orientation -> Orientation enum (NO Int); usar toSurfaceRotation() o
+   *     fromRotationDegrees() para obtener degrees.
+   *
+   * Pipeline:
+   *   ImageProxy.planes[] (YUV_420_888) → byte[] NV21 → JPEG → Bitmap → MPImage
    */
   private fun frameToMpImage(frame: Frame): MPImage {
-    val image = frame.image
-    val width = image.width
-    val height = image.height
+    val imageProxy = try {
+      frame.imageProxy
+    } catch (e: Exception) {
+      throw IOException("Frame.imageProxy no disponible: ${e.message}")
+    }
+
+    val width = imageProxy.width
+    val height = imageProxy.height
 
     // 1) YUV -> NV21 -> JPEG -> Bitmap
-    val nv21 = yuv420ToNv21(image, width, height)
+    val nv21 = yuv420ToNv21(imageProxy, width, height)
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
     val out = ByteArrayOutputStream()
     yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
@@ -205,11 +242,15 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     var bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
       ?: throw IOException("BitmapFactory.decodeByteArray returned null")
 
-    // 2) Rotar el bitmap según la orientación del frame (VisionCamera ya da la rotación
-    //    corregida en portrait). Por defecto el sensor trasero da frames landscape;
-    //    VisionCamera aplica la rotación correcta en frame.orientation pero a veces
-    //    hace falta un giro manual.
-    val rotationDegrees = frame.orientation?.toFloat() ?: 0f
+    // 2) Rotar el bitmap según la orientación del frame.
+    //    VisionCamera v4.5: frame.orientation devuelve Orientation enum.
+    //    Convertimos a degrees para postRotate.
+    val rotationDegrees = try {
+      orientationToDegrees(frame.orientation)
+    } catch (e: Exception) {
+      // Si el frame se invalidó, asumimos portrait
+      0
+    }
     if (rotationDegrees != 0f) {
       val matrix = Matrix().apply { postRotate(rotationDegrees) }
       val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
@@ -223,20 +264,36 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     return BitmapImageBuilder(bitmap).build()
   }
 
-  /** Combina los 3 planos YUV_420_888 en un buffer NV21 contiguo. */
-  private fun yuv420ToNv21(image: android.media.Image, width: Int, height: Int): ByteArray {
+  /** Convierte Orientation enum de VisionCamera a grados de rotación. */
+  private fun orientationToDegrees(orientation: Orientation): Float {
+    return when (orientation) {
+      Orientation.PORTRAIT -> 0f
+      Orientation.LANDSCAPE_LEFT -> 90f
+      Orientation.PORTRAIT_UPSIDE_DOWN -> 180f
+      Orientation.LANDSCAPE_RIGHT -> 270f
+    }
+  }
+
+  /**
+   * Combina los 3 planos YUV_420_888 (vía ImageProxy) en un buffer NV21 contiguo.
+   *
+   * ImageProxy.planes[] es androidx.camera.core.ImageProxy.PlaneProxy[], NO
+   * android.media.Image.Plane[]. La API es similar pero conviene usar
+   * rowStride/pixelStride del PlaneProxy.
+   */
+  private fun yuv420ToNv21(imageProxy: androidx.camera.core.ImageProxy, width: Int, height: Int): ByteArray {
     val ySize = width * height
     val uvSize = ySize / 2
     val nv21 = ByteArray(ySize + uvSize)
 
-    // Y plane
-    val yBuffer = image.planes[0].buffer
-    val uBuffer = image.planes[1].buffer
-    val vBuffer = image.planes[2].buffer
+    val planes = imageProxy.planes
+    val yBuffer = planes[0].buffer
+    val uBuffer = planes[1].buffer
+    val vBuffer = planes[2].buffer
 
-    val yRowStride = image.planes[0].rowStride
-    val uvRowStride = image.planes[1].rowStride
-    val uvPixelStride = image.planes[1].pixelStride
+    val yRowStride = planes[0].rowStride
+    val uvRowStride = planes[1].rowStride
+    val uvPixelStride = planes[1].pixelStride
 
     // Copia Y
     var pos = 0
@@ -253,9 +310,9 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       }
     }
 
-    // Copia VU intercalado
+    // Copia VU intercalado (NV21 = V antes que U)
     if (uvRowStride == width / 2 && uvPixelStride == 2) {
-      // Caso óptimo: VU ya está intercalado contiguo
+      // Caso óptimo: VU ya está intercalado contiguo en el buffer de vBuffer
       val vuBuffer = vBuffer
       vuBuffer.get(nv21, ySize, uvSize)
     } else {
@@ -263,7 +320,6 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       var uvPos = ySize
       val uvHeight = height / 2
       val uvWidth = width / 2
-      val uRowStrideAbs = if (uBuffer.remaining() >= uvWidth * uvHeight) uvRowStride else uvWidth * uvPixelStride
       var row = 0
       while (row < uvHeight) {
         var col = 0
@@ -299,7 +355,7 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       l.putDouble("z", lm.z().toDouble())
       l.putDouble("v", lm.visibility().orElse(0f).toDouble())
       l.putDouble("p", lm.presence().orElse(0f).toDouble())
-      landmarksArr.pushArray(l)
+      landmarksArr.pushMap(l)
     }
     map.putArray("landmarks", landmarksArr)
 
@@ -313,7 +369,7 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
         l.putDouble("z", lm.z().toDouble())
         l.putDouble("v", lm.visibility().orElse(0f).toDouble())
         l.putDouble("p", lm.presence().orElse(0f).toDouble())
-        worldArr.pushArray(l)
+        worldArr.pushMap(l)
       }
       map.putArray("worldLandmarks", worldArr)
     }
