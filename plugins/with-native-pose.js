@@ -30,9 +30,29 @@ const { withDangerousMod, withMainApplication, AndroidConfig } = require("expo/c
 
 const PACKAGE_NAME = "com.aiofitness.coach";
 const POSE_PACKAGE_DIR = "com/aiofitness/pose";
-const POSE_MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker/float16/1/pose_landmarker.task";
+
+// Modelo de MediaPipe PoseLandmarker. Múltiples URLs para redundancia:
+// El path correcto en GCS incluye la variante del modelo (_full, _lite, _heavy).
+// La URL antigua sin sufijo daba 404 (Google la movió).
+// Orden de preferencia:
+//   1) pose_landmarker_full (mejor precisión, ~9MB) - Google Cloud Storage
+//   2) pose_landmarker_full - mirror HuggingFace (en caso de que GCS tenga issues)
+//   3) pose_landmarker_lite (más rápido, ~6MB) - GCS
+//   4) pose_landmarker_lite - HuggingFace
+//   5) pose_landmarker_heavy (mejor precisión, ~26MB) - GCS
+// Si todos fallan, el plugin Kotlin lo detecta en runtime (getOrCreateLandmarker
+// devuelve null) y la app sigue abriendo la cámara pero sin esqueleto. No crashea.
+const POSE_MODEL_URLS = [
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  "https://huggingface.co/litert-community/MediaPipe-PoseLandmarker-Full/resolve/main/pose_landmarker_full.task",
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+  "https://huggingface.co/litert-community/MediaPipe-PoseLandmarker-Lite/resolve/main/pose_landmarker_lite.task",
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
+];
 const POSE_MODEL_FILENAME = "pose_landmarker.task";
+// Tamaño mínimo aceptable: el modelo lite pesa ~6MB, full ~9MB, heavy ~26MB.
+// Si la descarga devuelve menos de 5MB, asumimos corrupta y probamos siguiente URL.
+const MIN_MODEL_SIZE = 5_000_000;
 
 module.exports = function withNativePose(config) {
   // 1) Copy Kotlin sources + download model with withDangerousMod
@@ -89,17 +109,18 @@ module.exports = function withNativePose(config) {
 
       if (fs.existsSync(modelDestPath)) {
         const stat = fs.statSync(modelDestPath);
-        if (stat.size > 1_000_000) {
+        if (stat.size > MIN_MODEL_SIZE) {
           console.log(
             `[with-native-pose] modelo ya existe (${stat.size} bytes), omitiendo descarga`
           );
         } else {
-          console.log("[with-native-pose] modelo existe pero está corrupto, re-descargando...");
-          await downloadFile(POSE_MODEL_URL, modelDestPath);
+          console.log(`[with-native-pose] modelo existe pero está corrupto (${stat.size} bytes < ${MIN_MODEL_SIZE}), re-descargando...`);
+          fs.unlinkSync(modelDestPath);
+          await downloadModelWithFallbacks(modelDestPath);
         }
       } else {
         console.log("[with-native-pose] descargando modelo pose_landmarker.task (~9MB)...");
-        await downloadFile(POSE_MODEL_URL, modelDestPath);
+        await downloadModelWithFallbacks(modelDestPath);
         const stat = fs.statSync(modelDestPath);
         console.log(`[with-native-pose] modelo descargado: ${stat.size} bytes`);
       }
@@ -219,6 +240,43 @@ function insertAfterLastImport(source, line) {
     lines.splice(lastImportIdx + 1, 0, line);
   }
   return lines.join("\n");
+}
+
+/**
+ * Descarga el modelo probando varias URLs en orden. Devuelve true si alguna
+ * tuvo éxito. Lanza Error solo si TODAS fallan.
+ */
+async function downloadModelWithFallbacks(destPath) {
+  let lastErr = null;
+  for (let i = 0; i < POSE_MODEL_URLS.length; i++) {
+    const url = POSE_MODEL_URLS[i];
+    console.log(`[with-native-pose] intentando URL ${i + 1}/${POSE_MODEL_URLS.length}: ${url}`);
+    try {
+      await downloadFile(url, destPath);
+      const stat = fs.statSync(destPath);
+      if (stat.size >= MIN_MODEL_SIZE) {
+        console.log(`[with-native-pose] descarga OK desde URL #${i + 1} (${stat.size} bytes)`);
+        return true;
+      }
+      console.warn(`[with-native-pose] URL #${i + 1} devolvió ${stat.size} bytes (demasiado pequeño), probando siguiente...`);
+      fs.unlinkSync(destPath);
+    } catch (err) {
+      console.warn(`[with-native-pose] URL #${i + 1} falló: ${err.message}`);
+      lastErr = err;
+      if (fs.existsSync(destPath)) {
+        try { fs.unlinkSync(destPath); } catch {}
+      }
+    }
+  }
+  // Todas fallaron. Lanzamos con mensaje claro para que el build falle y se vea
+  // en el log del workflow, PERO el plugin Kotlin maneja el modelo ausente
+  // graceful en runtime (la cámara abre sin esqueleto). Aún así, preferimos
+  // fallar el build para forzar revisión.
+  throw new Error(
+    `[with-native-pose] TODAS las URLs de descarga del modelo fallaron. ` +
+    `Último error: ${lastErr?.message ?? "desconocido"}. ` +
+    `URLs probadas: ${POSE_MODEL_URLS.join(", ")}`
+  );
 }
 
 /** Descarga un fichero binario desde una URL HTTPS al filesystem. */
