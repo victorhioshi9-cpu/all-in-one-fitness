@@ -62,7 +62,6 @@ export default ({ config }) => ({
     ],
     "./plugins/fix-permissions-service",
     "./plugins/with-health-connect-queries",
-    "./plugins/with-health-connect-delegate",
     "./plugins/with-native-pose",
     "./plugins/with-app-gradle-deps",
     [
