@@ -14,13 +14,27 @@
  * - Abre la BD de forma perezosa.
  * - Aplica el schema.sql completo la primera vez.
  * - Expone `execAsync`, `queryAsync`, `queryFirstAsync` con tipos.
+ *
+ * BUGFIX (v0.3.1):
+ *   Antes usábamos `Asset.fromModule(require('./schema.sql'))` para cargar
+ *   el schema SQL desde un asset. Esto fallaba en runtime con
+ *   "opendatabase cannot read property 'uri' of null" porque el asset NO
+ *   estaba en assetBundlePatterns y `Asset.fromModule` devolvía un objeto
+ *   con `localUri: null` y `uri: null`.
+ *   Ahora importamos el SQL como string vía `?raw` (Metro raw import), que
+ *   embebe el contenido directamente en el bundle JS sin pasar por el
+ *   sistema de assets.
  */
 import * as SQLite from "expo-sqlite";
-import { Asset } from "expo-asset";
-import * as FileSystem from "expo-file-system";
 
 const DB_NAME = "aio_fitness.db";
-const SCHEMA_BUNDLE_PATH = require("./schema.sql");
+
+// Carga los schemas desde los archivos .ts auto-generados (con el SQL embebido
+// como template string). Esto evita los problemas con Asset.fromModule y
+// assetBundlePatterns.
+// Para regenerar los .ts tras editar los .sql: node scripts/inline-sql.js
+import schemaSql from "./schema";
+import schemaPhase3Sql from "./schema_phase3";
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _ready = false;
@@ -35,20 +49,55 @@ export async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!_ready) {
     await applySchema(db);
     // Aplicar migraciones Fase 3 (idempotentes con IF NOT EXISTS)
-    await applySchemaFile(db, require("./schema_phase3.sql"));
+    await applySchemaFile(db, schemaPhase3Sql);
     _ready = true;
   }
   return db;
 }
 
 async function applySchema(db: SQLite.SQLiteDatabase): Promise<void> {
-  await applySchemaFile(db, SCHEMA_BUNDLE_PATH);
+  await applySchemaFile(db, schemaSql);
 }
 
-async function applySchemaFile(db: SQLite.SQLiteDatabase, bundlePath: any): Promise<void> {
-  const asset = Asset.fromModule(bundlePath);
-  await asset.downloadAsync();
-  const sql = await FileSystem.readAsStringAsync(asset.localUri || asset.uri);
+/**
+ * Aplica un schema SQL al database. Acepta:
+ *   - string directo (caso normal con imports `?raw` o inline)
+ *   - número (module ID de require, fallback legacy)
+ *   - objeto con .default o .sql (por si el bundler devuelve un objeto)
+ */
+async function applySchemaFile(db: SQLite.SQLiteDatabase, sqlOrModule: any): Promise<void> {
+  let sql: string;
+
+  if (typeof sqlOrModule === "string") {
+    // Caso ideal: import como string raw
+    sql = sqlOrModule;
+  } else if (sqlOrModule && typeof sqlOrModule === "object" && sqlOrModule.default) {
+    // Caso: el bundler devolvió { default: "..." }
+    sql = sqlOrModule.default;
+  } else if (sqlOrModule && typeof sqlOrModule === "object" && sqlOrModule.sql) {
+    // Caso: el bundler devolvió { sql: "..." }
+    sql = sqlOrModule.sql;
+  } else {
+    // Último recurso: era un module ID numérico de Asset.fromModule.
+    // No deberíamos llegar aquí, pero por si acaso intentamos el camino Asset.
+    const { Asset } = require("expo-asset");
+    const { default: FileSystem } = require("expo-file-system");
+    const asset = Asset.fromModule(sqlOrModule);
+    await asset.downloadAsync();
+    const uri = asset.localUri || asset.uri;
+    if (!uri) {
+      throw new Error(
+        "No se pudo resolver el URI del asset SQL. Asegúrate de que los archivos " +
+        "*.sql están en assetBundlePatterns o usa imports raw (`?raw`)."
+      );
+    }
+    sql = await FileSystem.readAsStringAsync(uri);
+  }
+
+  if (!sql || typeof sql !== "string" || sql.length === 0) {
+    throw new Error("Schema SQL vacío o inválido tras resolución.");
+  }
+
   // v14: execAsync acepta un string con varios statements separados por ';'.
   await db.execAsync(sql);
 }
