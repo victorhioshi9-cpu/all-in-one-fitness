@@ -43,7 +43,9 @@ export default ({ config }) => ({
           "Esta app necesita la cámara para detectar tu postura en tiempo real y darte correcciones biomecánicas. El video nunca sale del dispositivo.",
         enableMicrophonePermission: true,
         microphonePermissionText:
-          "El micrófono se usa solo si decides grabar audio al exportar una serie."
+          "El micrófono se usa solo si decides grabar audio al exportar una serie.",
+        enableFrameProcessors: true,
+        enableCodeScanner: false
       }
     ],
     "expo-file-system",

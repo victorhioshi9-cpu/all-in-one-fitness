@@ -125,14 +125,67 @@ export async function openHealthConnectInPlayStore(): Promise<boolean> {
 }
 
 /**
- * Abre la pantalla principal de Health Connect (no la de nuestra app).
- * Útil cuando el usuario tiene que activar manualmente permisos que revocó.
+ * Abre la pantalla de gestión de permisos de Health Connect para NUESTRA app.
+ *
+ * Intenta múltiples vías en orden:
+ *   1) Intent explícito ACTION_MANAGE_HEALTH_PERMISSIONS con package de nuestra app
+ *      → abre directamente la pantalla "Permisos de All-in-One Fitness" dentro
+ *      de Health Connect (Android 14+).
+ *   2) openHealthConnectSettings() del SDK (que a veces abre la pantalla general
+ *      de HC donde hay que buscar la app manualmente).
+ *   3) Linking.openSettings() como último recurso (ajustes de la app Android).
+ *
+ * Esto resuelve 'no aparece mi app para darle permisos' porque el intent #1
+ * abre DIRECTAMENTE la pantalla de permisos de nuestra app, sin que el usuario
+ * tenga que buscarla en una lista.
  */
 export async function openHealthConnectApp(): Promise<void> {
+  // Opción 1: intent directo ACTION_MANAGE_HEALTH_PERMISSIONS (Android 14+).
+  // URI format: package:com.aiofitness.coach
+  const ourPackage = "com.aiofitness.coach";
+  const managePermsUrl = `android.settings.health.MANAGE_HEALTH_PERMISSIONS`;
+  const managePermsWithPkg = `${managePermsUrl}?package=${ourPackage}`;
+
+  try {
+    // Probamos primero con el scheme package: (algunas ROMs lo soportan).
+    const intentUrl = `intent://#Intent;action=android.settings.health.MANAGE_HEALTH_PERMISSIONS;package=${ourPackage};end`;
+    const canOpenIntent = await Linking.canOpenURL(intentUrl).catch(() => false);
+    if (canOpenIntent) {
+      await Linking.openURL(intentUrl);
+      console.log("[healthConnect] abierto ACTION_MANAGE_HEALTH_PERMISSIONS (intent)");
+      return;
+    }
+  } catch (err) {
+    console.warn("[healthConnect] intent ACTION_MANAGE_HEALTH_PERMISSIONS falló:", err);
+  }
+
+  // Opción 2: scheme del SDK.
+  try {
+    const canOpenManage = await Linking.canOpenURL(managePermsWithPkg).catch(() => false);
+    if (canOpenManage) {
+      await Linking.openURL(managePermsWithPkg);
+      console.log("[healthConnect] abierto MANAGE_HEALTH_PERMISSIONS (scheme)");
+      return;
+    }
+  } catch (err) {
+    console.warn("[healthConnect] scheme MANAGE_HEALTH_PERMISSIONS falló:", err);
+  }
+
+  // Opción 3: openHealthConnectSettings() del SDK nativo.
   try {
     await _openHCSettings();
-  } catch {
-    Linking.openSettings();
+    console.log("[healthConnect] abierto _openHCSettings() del SDK");
+    return;
+  } catch (err) {
+    console.warn("[healthConnect] _openHCSettings() falló:", err);
+  }
+
+  // Opción 4: ajustes generales de la app Android (último recurso).
+  try {
+    await Linking.openSettings();
+    console.log("[healthConnect] abierto Linking.openSettings() (último recurso)");
+  } catch (err) {
+    console.error("[healthConnect] TODAS las opciones de apertura fallaron:", err);
   }
 }
 

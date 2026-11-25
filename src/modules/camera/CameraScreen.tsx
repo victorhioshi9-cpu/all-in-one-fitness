@@ -86,6 +86,7 @@ const CameraScreenInner: React.FC = () => {
   const [count, setCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
+  const [reloadKeyInner, setReloadKeyInner] = useState(0);
   const cameraRef = useRef<any>(null);
 
   // --- Pose detection simple ---
@@ -219,11 +220,55 @@ const CameraScreenInner: React.FC = () => {
   }
 
   // --- Render: sin dispositivo ---
+  // Si después de 5s no hay dispositivo, mostramos mensaje de error con botón
+  // reintentar. Esto pasa cuando el permiso de cámara no está concedido o el
+  // plugin nativo de VisionCamera no se aplicó bien.
+  const [deviceWaitTime, setDeviceWaitTime] = useState(0);
+  useEffect(() => {
+    if (device) return;
+    const interval = setInterval(() => {
+      setDeviceWaitTime((t) => t + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [device]);
+
   if (!device) {
+    const showTimeout = deviceWaitTime >= 5;
     return (
       <View style={styles.center}>
-        <ActivityIndicator color={colors.accent} />
-        <Text style={{ color: colors.textMuted, marginTop: spacing.md }}>Buscando cámara…</Text>
+        {!showTimeout ? (
+          <>
+            <ActivityIndicator color={colors.accent} />
+            <Text style={{ color: colors.textMuted, marginTop: spacing.md }}>Buscando cámara…</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.title}>No se encontró cámara</Text>
+            <Text style={styles.hint}>
+              Posibles causas:
+              {"\n"}• El permiso de cámara no está concedido.
+              {"\n"}• El dispositivo no tiene cámara trasera.
+              {"\n"}• Otra app está usando la cámara.
+              {"\n\n"}Toca "Reintentar" para volver a buscar, o "Abrir Ajustes" para verificar el permiso.
+            </Text>
+            <Pressable
+              style={styles.btn}
+              onPress={() => {
+                setDeviceWaitTime(0);
+                // Forzar re-mount del componente hijo
+                setReloadKeyInner((k) => k + 1);
+              }}
+            >
+              <Text style={styles.btnText}>Reintentar</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.btn, { backgroundColor: "rgba(255,255,255,0.06)", marginTop: spacing.sm }]}
+              onPress={() => Linking.openSettings().catch(() => {})}
+            >
+              <Text style={[styles.btnText, { color: colors.bright }]}>Abrir Ajustes</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     );
   }
