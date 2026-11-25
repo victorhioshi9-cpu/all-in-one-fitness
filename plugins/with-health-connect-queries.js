@@ -161,6 +161,57 @@ module.exports = function withHealthConnectQueries(config) {
       }
     }
 
+    // --- 6) <uses-permission> health.* en el manifest raíz ---
+    // El plugin de react-native-health-connect NO añade los <uses-permission>
+    // automáticamente. Los lee de readTypes/writeTypes pero NO los convierte en
+    // <uses-permission>. Sin estos permisos en el manifest, la app NO aparece
+    // en la lista de apps que pueden pedir acceso a Health Connect.
+    // Lista completa de permisos HC: https://developer.android.com/reference/kotlin/androidx/health/connect/client/permission/HealthPermission
+    const HEALTH_PERMISSIONS = [
+      // Read permissions (todas las que pedimos en app.config.ts readTypes)
+      "android.permission.health.READ_STEPS",
+      "android.permission.health.READ_HEART_RATE",
+      "android.permission.health.READ_ACTIVE_CALORIES_BURNED",
+      "android.permission.health.READ_TOTAL_CALORIES_BURNED",
+      "android.permission.health.READ_BASAL_METABOLIC_RATE",
+      "android.permission.health.READ_SLEEP",
+      "android.permission.health.READ_WEIGHT",
+      "android.permission.health.READ_BODY_FAT",
+      "android.permission.health.READ_HEIGHT",
+      "android.permission.health.READ_HEART_RATE_VARIABILITY",
+      "android.permission.health.READ_HYDRATION",
+      "android.permission.health.READ_EXERCISE",
+      // Write permissions (todas las que pedimos en app.config.ts writeTypes)
+      "android.permission.health.WRITE_EXERCISE",
+      "android.permission.health.WRITE_ACTIVE_CALORIES_BURNED",
+      "android.permission.health.WRITE_TOTAL_CALORIES_BURNED",
+      "android.permission.health.WRITE_STEPS",
+      "android.permission.health.WRITE_WEIGHT",
+      "android.permission.health.WRITE_HEART_RATE",
+      "android.permission.health.WRITE_SLEEP",
+      "android.permission.health.WRITE_HYDRATION"
+    ];
+
+    // Asegurar que manifest tiene array 'uses-permission'
+    const usesPermissionArray = $["uses-permission"] || [];
+    $["uses-permission"] = usesPermissionArray;
+
+    let addedPerms = 0;
+    for (const perm of HEALTH_PERMISSIONS) {
+      const alreadyExists = usesPermissionArray.some(
+        (p) => p?.$?.["android:name"] === perm
+      );
+      if (!alreadyExists) {
+        usesPermissionArray.push({
+          $: { "android:name": perm }
+        });
+        addedPerms++;
+      }
+    }
+    if (addedPerms > 0) {
+      console.log(`[with-hc-queries] ${addedPerms} <uses-permission health.*> añadidos al manifest`);
+    }
+
     return cfg;
   });
 };

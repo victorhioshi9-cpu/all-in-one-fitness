@@ -3,23 +3,22 @@
  * ----------------------------------------------------------------------------
  * Expo config plugin que instala el plugin nativo de PoseLandmarker.
  *
- * v0.3.8 — Enfoque robusto para MainApplication.kt:
- *   En lugar de intentar matchear patrones complejos como
- *   `PackageList(this).packages.apply { ... }` (que varían entre versiones
- *   de Expo SDK y New/Old Arch), usamos una estrategia simple:
+ * v0.3.9 — Enfoque robusto para MainApplication.kt de Expo SDK 51 New Arch.
+ * La estructura real del getPackages() generado por Expo es:
  *
- *   1) Buscar la expresión `PackageList(this).packages` (que SIEMPRE está
- *      en getPackages() de Expo RN) y reemplazarla por
- *      `PackageList(this).packages + PoseLandmarkerPluginPackage()`
- *      Usar `+` es idiomático Kotlin para añadir un elemento a una List.
+ *   override fun getPackages(): List<ReactPackage> {
+ *     // Packages that cannot be autolinked yet can be added manually here, for example:
+ *     // packages.add(new MyReactNativePackage());
+ *     return PackageList(this).packages
+ *   }
  *
- *   2) Buscar `super.onCreate()` y añadir justo después:
- *      `PoseLandmarkerPluginPackage.registerIfNeeded(this)`
+ * Para añadir nuestro package, reemplazamos:
+ *   return PackageList(this).packages
+ * por:
+ *   return PackageList(this).packages + PoseLandmarkerPluginPackage()
  *
- *   3) Añadir el import al final del bloque de imports.
- *
- *   Esto funciona en TODOS los MainApplication.kt generados por Expo SDK 51
- *   sin importar si usan `apply {}`, `toMutableList()`, o return directo.
+ * El operador `+` es idiomático Kotlin para concatenar List + elemento.
+ * Funciona sin importar si el return está en una sola línea o en varias.
  */
 const fs = require("fs");
 const path = require("path");
@@ -109,24 +108,38 @@ module.exports = function withNativePose(config) {
       changed = true;
     }
 
-    // 2b) Añadir `+ PoseLandmarkerPluginPackage()` justo después de
-    //     `PackageList(this).packages` si no está ya añadido.
-    if (!contents.includes("PoseLandmarkerPluginPackage()")) {
-      const pattern = /(PackageList\(this\)\.packages)(?!\s*\+\s*PoseLandmarkerPluginPackage)/;
+    // 2b) Añadir `+ PoseLandmarkerPluginPackage()` al getPackages().
+    //     La estructura real en Expo SDK 51 New Arch es:
+    //       return PackageList(this).packages
+    //     Reemplazamos por:
+    //       return PackageList(this).packages + PoseLandmarkerPluginPackage()
+    //
+    //     Chequeamos con `+ PoseLandmarkerPluginPackage()` (con paréntesis) para
+    //     no confundir con el import `PoseLandmarkerPluginPackage` (sin paréntesis).
+    if (!contents.includes("+ PoseLandmarkerPluginPackage()")) {
+      const pattern = /PackageList\(this\)\.packages(?!\s*\+\s*PoseLandmarkerPluginPackage)/;
       if (pattern.test(contents)) {
-        contents = contents.replace(pattern, "$1 + PoseLandmarkerPluginPackage()");
+        contents = contents.replace(
+          pattern,
+          "PackageList(this).packages + PoseLandmarkerPluginPackage()"
+        );
         console.log("[with-native-pose] '+ PoseLandmarkerPluginPackage()' añadido tras PackageList(this).packages");
         changed = true;
       } else {
-        const pattern2 = /(PackageList\(this\)\.getPackages\(\))(?!\s*\+\s*PoseLandmarkerPluginPackage)/;
+        // Plan B: buscar `val packages = PackageList(this).packages` y añadir add() en la siguiente línea.
+        const pattern2 = /(val\s+packages\s*=\s*PackageList\(this\)\.packages)/;
         if (pattern2.test(contents)) {
-          contents = contents.replace(pattern2, "$1 + PoseLandmarkerPluginPackage()");
-          console.log("[with-native-pose] '+ PoseLandmarkerPluginPackage()' añadido tras PackageList(this).getPackages()");
+          contents = contents.replace(
+            pattern2,
+            "$1\n      packages.add(PoseLandmarkerPluginPackage())"
+          );
+          console.log("[with-native-pose] packages.add(PoseLandmarkerPluginPackage()) añadido");
           changed = true;
         } else {
           console.warn(
             "[with-native-pose] WARNING: no se encontró 'PackageList(this).packages' en MainApplication.kt. " +
-            "El plugin nativo NO se registrará. Revisa MainApplication.kt manualmente."
+            "El plugin nativo NO se registrará en getPackages(). " +
+            "Revisa MainApplication.kt manualmente y añade '+ PoseLandmarkerPluginPackage()' al return."
           );
         }
       }
