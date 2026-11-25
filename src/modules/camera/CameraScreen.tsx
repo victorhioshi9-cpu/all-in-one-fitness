@@ -1,21 +1,26 @@
 /**
- * CameraScreen.tsx — v0.3.7
+ * CameraScreen.tsx — Versión funcional simple (v0.3.5)
  * ----------------------------------------------------------------------------
- * Versión con pose detection SIMPLE (sin SharedValue/Skia que rompían toques).
- * Con ErrorBoundary local para que si algo falla en el hook de pose, NO
- * derribe toda la app — muestra fallback con botón "Recargar".
+ * Versión sin react-native-reanimated, sin Skia overlay, sin pose detection.
+ * Solo preview de cámara + selector de ejercicio + steppers grandes.
+ *
+ * Cambios v0.3.5:
+ *   - Selección directa: al tocar un ejercicio, se inicia la cámara al instante
+ *     (sin botón "Iniciar cámara").
+ *   - Buscador de ejercicios (filtro por texto).
+ *   - Categorías collapsables (tap header para mostrar/ocultar ejercicios).
+ *   - Catálogo ampliado a 41 ejercicios.
  */
-import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
-  ActivityIndicator, Linking, Alert, TextInput, Keyboard
+  ActivityIndicator, Linking, Alert, TextInput
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
-import { SkeletonOverlaySimple } from "./SkeletonOverlaySimple";
 
 type Mode = "select_exercise" | "tracking";
 
@@ -29,55 +34,12 @@ const CATEGORY_META: Record<ExerciseCategory, { label: string; emoji: string; co
   cardio: { label: "Cardio", emoji: "🔥", color: colors.error }
 };
 
-// ============================================================================
-// ErrorBoundary local — si el hook de pose crashea, no derriba toda la app.
-// ============================================================================
-class CameraErrorBoundary extends React.Component<
-  { children: React.ReactNode; onReset: () => void },
-  { error: Error | null }
-> {
-  constructor(props: { children: React.ReactNode; onReset: () => void }) {
-    super(props);
-    this.state = { error: null };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-  componentDidCatch(error: Error) {
-    console.error("[CameraErrorBoundary] error de render en CameraScreen:", error);
-  }
-  render() {
-    if (this.state.error) {
-      return (
-        <View style={styles.center}>
-          <Text style={styles.title}>Error en Coach AI</Text>
-          <Text style={styles.hint}>
-            {this.state.error.message || String(this.state.error)}
-          </Text>
-          <Pressable
-            style={styles.btn}
-            onPress={() => {
-              this.setState({ error: null });
-              this.props.onReset();
-            }}
-          >
-            <Text style={styles.btnText}>Recargar Coach</Text>
-          </Pressable>
-        </View>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-// ============================================================================
-// Inner component (la que usa hooks de pose)
-// ============================================================================
-const CameraScreenInner: React.FC = () => {
+export const CameraScreen: React.FC = () => {
   useKeepAwake();
   const { width, height } = useWindowDimensions();
   const cameraPerm = useCameraPermission();
-  const device = useCameraDevice("back");
+  const [cameraPosition, setCameraPosition] = useState<"front" | "back">("back");
+  const device = useCameraDevice(cameraPosition);
 
   const [mode, setMode] = useState<Mode>("select_exercise");
   const [preset, setPreset] = useState<ExercisePreset>(EXERCISE_PRESETS.squat);
@@ -86,67 +48,7 @@ const CameraScreenInner: React.FC = () => {
   const [count, setCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
-  const [reloadKeyInner, setReloadKeyInner] = useState(0);
   const cameraRef = useRef<any>(null);
-
-  // --- Pose detection simple ---
-  // Importado aquí dentro para que si el hook crashea, el ErrorBoundary lo capture.
-  // (El hook está definido en un archivo aparte y se importa arriba.)
-  let pose: any = null;
-  let fps = 0;
-  let frameProcessor: any = undefined;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
-    const result = useSimplePoseFrameProcessor(mode === "tracking");
-    pose = result.pose;
-    fps = result.fps;
-    frameProcessor = result.frameProcessor;
-  } catch (err: any) {
-    // Si el hook falla al inicializar (p.ej. API de worklets no disponible),
-    // capturamos el error y seguimos sin pose detection. La cámara aún funciona.
-    console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
-  }
-
-  // --- Contador automático de reps (heurística simple por altura de cadera) ---
-  const lastHipYRef = useRef<number | null>(null);
-  const repPhaseRef = useRef<"down" | "up">("up");
-  const repPeakYRef = useRef<number>(1.0);
-
-  useEffect(() => {
-    if (mode !== "tracking") return;
-    if (!pose || !pose.detected || !pose.landmarks || pose.landmarks.length < 25) return;
-
-    const lh = pose.landmarks[23];
-    const rh = pose.landmarks[24];
-    if (!lh || !rh) return;
-    const hipY = (lh.y + rh.y) / 2;
-    if (typeof hipY !== "number") return;
-
-    const last = lastHipYRef.current;
-    lastHipYRef.current = hipY;
-
-    if (last === null) {
-      repPeakYRef.current = hipY;
-      return;
-    }
-
-    if (hipY > last + 0.005) {
-      if (hipY > repPeakYRef.current) {
-        repPeakYRef.current = hipY;
-      }
-      repPhaseRef.current = "down";
-    } else if (hipY < last - 0.005) {
-      if (repPhaseRef.current === "down") {
-        const amplitude = repPeakYRef.current - hipY;
-        if (amplitude > 0.04) {
-          setCount((c) => c + 1);
-          repPeakYRef.current = hipY;
-          repPhaseRef.current = "up";
-        }
-      }
-    }
-  }, [pose, mode]);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -176,15 +78,11 @@ const CameraScreenInner: React.FC = () => {
   };
 
   // --- Seleccionar ejercicio e ir directo a tracking ---
-  const selectExercise = useCallback((ex: ExercisePreset) => {
-    Keyboard.dismiss();
+  const selectExercise = (ex: ExercisePreset) => {
     setPreset(ex);
     setCount(0);
-    lastHipYRef.current = null;
-    repPhaseRef.current = "up";
-    repPeakYRef.current = 1.0;
     setMode("tracking");
-  }, []);
+  };
 
   // --- Filtrar ejercicios por búsqueda ---
   const filteredExercises = useMemo(() => {
@@ -220,55 +118,11 @@ const CameraScreenInner: React.FC = () => {
   }
 
   // --- Render: sin dispositivo ---
-  // Si después de 5s no hay dispositivo, mostramos mensaje de error con botón
-  // reintentar. Esto pasa cuando el permiso de cámara no está concedido o el
-  // plugin nativo de VisionCamera no se aplicó bien.
-  const [deviceWaitTime, setDeviceWaitTime] = useState(0);
-  useEffect(() => {
-    if (device) return;
-    const interval = setInterval(() => {
-      setDeviceWaitTime((t) => t + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [device]);
-
   if (!device) {
-    const showTimeout = deviceWaitTime >= 5;
     return (
       <View style={styles.center}>
-        {!showTimeout ? (
-          <>
-            <ActivityIndicator color={colors.accent} />
-            <Text style={{ color: colors.textMuted, marginTop: spacing.md }}>Buscando cámara…</Text>
-          </>
-        ) : (
-          <>
-            <Text style={styles.title}>No se encontró cámara</Text>
-            <Text style={styles.hint}>
-              Posibles causas:
-              {"\n"}• El permiso de cámara no está concedido.
-              {"\n"}• El dispositivo no tiene cámara trasera.
-              {"\n"}• Otra app está usando la cámara.
-              {"\n\n"}Toca "Reintentar" para volver a buscar, o "Abrir Ajustes" para verificar el permiso.
-            </Text>
-            <Pressable
-              style={styles.btn}
-              onPress={() => {
-                setDeviceWaitTime(0);
-                // Forzar re-mount del componente hijo
-                setReloadKeyInner((k) => k + 1);
-              }}
-            >
-              <Text style={styles.btnText}>Reintentar</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.btn, { backgroundColor: "rgba(255,255,255,0.06)", marginTop: spacing.sm }]}
-              onPress={() => Linking.openSettings().catch(() => {})}
-            >
-              <Text style={[styles.btnText, { color: colors.bright }]}>Abrir Ajustes</Text>
-            </Pressable>
-          </>
-        )}
+        <ActivityIndicator color={colors.accent} />
+        <Text style={{ color: colors.textMuted, marginTop: spacing.md }}>Buscando cámara…</Text>
       </View>
     );
   }
@@ -276,12 +130,7 @@ const CameraScreenInner: React.FC = () => {
   // --- Render: selector de ejercicio ---
   if (mode === "select_exercise") {
     return (
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.selectorContainer}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.selectorContainer}>
         <Text style={styles.selectorTitle}>Coach AI</Text>
         <Text style={styles.selectorSubtitle}>
           Toca un ejercicio para iniciar la cámara al instante.
@@ -326,9 +175,6 @@ const CameraScreenInner: React.FC = () => {
             onChangeText={setSearchQuery}
             autoCapitalize="none"
             autoCorrect={false}
-            autoFocus={false}
-            returnKeyType="search"
-            blurOnSubmit={true}
           />
           {searchQuery.length > 0 && (
             <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
@@ -386,7 +232,7 @@ const CameraScreenInner: React.FC = () => {
     );
   }
 
-  // --- Render: tracking (preview de cámara + overlay + HUD) ---
+  // --- Render: tracking (preview de cámara) ---
   return (
     <View style={styles.trackingContainer}>
       <Camera
@@ -397,43 +243,22 @@ const CameraScreenInner: React.FC = () => {
         photo={false}
         video={false}
         audio={false}
-        frameProcessor={frameProcessor}
       />
-
-      {/* Overlay del esqueleto (solo si hay pose detection disponible) */}
-      <SkeletonOverlaySimple
-        pose={pose}
-        width={width}
-        height={height}
-        pointColor="#fbbf24"
-        pointRadius={5}
-        lineColor="#ef4444"
-        lineWidth={2}
-      />
-
-      {/* HUD top */}
+      {/* HUD mínimo */}
       <View style={styles.hudTop}>
         <Pressable style={styles.hudBtn} onPress={() => setMode("select_exercise")}>
           <Text style={styles.hudBtnText}>← Atrás</Text>
         </Pressable>
         <Text style={styles.hudTitle}>{preset.emoji} {preset.name}</Text>
-        <View style={styles.hudFps}>
-          <Text style={styles.hudFpsText}>{fps} fps</Text>
-        </View>
+        <Pressable
+          style={styles.hudBtn}
+          onPress={() => setCameraPosition((p) => p === "back" ? "front" : "back")}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={styles.hudBtnText}>{cameraPosition === "back" ? "🔄 Frontal" : "🔄 Trasera"}</Text>
+        </Pressable>
       </View>
 
-      {/* Estado de pose detection */}
-      <View style={styles.poseStatus}>
-        {pose && pose.detected ? (
-          <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos)</Text>
-        ) : (
-          <Text style={styles.poseStatusWarn}>
-            {frameProcessor ? "Esperando cuerpo…" : "Pose detection no disponible (cámara modo manual)"}
-          </Text>
-        )}
-      </View>
-
-      {/* HUD bottom */}
       <View style={styles.hudBottom}>
         <View style={styles.hudStat}>
           <Text style={styles.hudStatLabel}>Reps</Text>
@@ -459,23 +284,6 @@ const CameraScreenInner: React.FC = () => {
         </View>
       </View>
     </View>
-  );
-};
-
-// ============================================================================
-// Export wrapper con ErrorBoundary
-// ============================================================================
-export const CameraScreen: React.FC = () => {
-  // Key para forzar re-mount del ErrorBoundary y limpiar el error al recargar.
-  const [reloadKey, setReloadKey] = useState(0);
-
-  return (
-    <CameraErrorBoundary
-      key={reloadKey}
-      onReset={() => setReloadKey((k) => k + 1)}
-    >
-      <CameraScreenInner />
-    </CameraErrorBoundary>
   );
 };
 
@@ -511,7 +319,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg, gap: spacing.sm
   },
   searchIcon: { fontSize: 16 },
-  searchInput: { flex: 1, color: colors.bright, fontSize: 15, paddingVertical: 0, minHeight: 22 },
+  searchInput: { flex: 1, color: colors.bright, fontSize: 15, paddingVertical: 0 },
   searchClear: { color: colors.textMuted, fontSize: 16, fontWeight: "700", paddingHorizontal: 6 },
 
   // Categorías
@@ -542,12 +350,6 @@ const styles = StyleSheet.create({
   hudBtn: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim },
   hudBtnText: { color: colors.bright, fontWeight: "700", fontSize: 13 },
   hudTitle: { color: colors.bright, fontSize: 16, fontWeight: "800", backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
-  hudFps: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim, minWidth: 70, alignItems: "center" },
-  hudFpsText: { color: colors.bright, fontSize: 12, fontWeight: "700" },
-
-  poseStatus: { position: "absolute", top: 90, left: 12, right: 12, alignItems: "center" },
-  poseStatusOk: { backgroundColor: "rgba(34,197,94,0.9)", color: "#fff", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
-  poseStatusWarn: { backgroundColor: "rgba(245,158,11,0.9)", color: "#000", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
 
   hudBottom: { position: "absolute", bottom: 40, left: 12, right: 12, flexDirection: "row", gap: spacing.sm, justifyContent: "space-around" },
   hudStat: { backgroundColor: "rgba(8,10,14,0.85)", padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, alignItems: "center", minWidth: 90 },

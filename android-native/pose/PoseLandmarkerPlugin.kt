@@ -92,8 +92,13 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
   /** Crea (lazy) o devuelve el PoseLandmarker cacheado. */
   @Synchronized
   private fun getOrCreateLandmarker(): PoseLandmarker? {
-    landmarkerRef.get()?.let { return it }
+    landmarkerRef.get()?.let {
+      Log.d(TAG, "getOrCreateLandmarker: cacheado, OK")
+      return it
+    }
+    Log.i(TAG, "getOrCreateLandmarker: creando nueva instancia. Modelo: $MODEL_PATH")
     return try {
+      Log.d(TAG, "Configurando BaseOptions con modelAssetPath=$MODEL_PATH delegate=${if (isGpu()) "GPU" else "CPU"}")
       val baseOptions = BaseOptions.builder()
         .setModelAssetPath(MODEL_PATH)
         .setDelegate(tryDelegateGpu())
@@ -174,12 +179,14 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     val landmarker = getOrCreateLandmarker() ?: run {
       // Si no hay landmarker (p.ej. modelo no encontrado), devolvemos "no detectado"
       // en lugar de crashear, para que la app siga abierta.
+      Log.w(TAG, "callback: getOrCreateLandmarker devolvió null, devolviendo empty result")
       return buildEmptyResult(System.currentTimeMillis())
     }
 
     val timestampMs = try {
       frame.timestamp.coerceAtLeast(0L)
     } catch (e: Exception) {
+      Log.w(TAG, "callback: frame.timestamp falló: ${e.message}")
       System.currentTimeMillis()
     }
 
@@ -192,7 +199,7 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
     val mpImage = try {
       frameToMpImage(frame)
     } catch (e: Throwable) {
-      Log.w(TAG, "frameToMpImage failed: ${e.message}")
+      Log.w(TAG, "frameToMpImage failed: ${e.message}", e)
       return buildEmptyResult(timestampMs)
     }
 
@@ -200,14 +207,19 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       // detectAsync en modo LIVE_STREAM dispara el ResultListener en background.
       landmarker.detectAsync(mpImage, timestampMs)
     } catch (e: Throwable) {
-      Log.w(TAG, "detectAsync failed: ${e.message}")
+      Log.w(TAG, "detectAsync failed: ${e.message}", e)
       return buildEmptyResult(timestampMs)
     }
 
     // Devolvemos el último resultado disponible (puede ser del frame previo).
     // Esto introduce ~1 frame de latencia pero mantiene 60 fps en el overlay.
     val result = lastResultRef.get()
-    return if (result != null) buildResultMap(result, timestampMs) else buildEmptyResult(timestampMs)
+    if (result != null) {
+      Log.d(TAG, "callback: devolviendo resultado con ${result.landmarks()?.firstOrNull()?.size ?: 0} landmarks")
+      return buildResultMap(result, timestampMs)
+    }
+    Log.d(TAG, "callback: aún no hay resultado (primer frame), devolviendo empty")
+    return buildEmptyResult(timestampMs)
   }
 
   /**
