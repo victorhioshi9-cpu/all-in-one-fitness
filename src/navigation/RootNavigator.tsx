@@ -126,8 +126,21 @@ export const RootNavigator: React.FC = () => {
       <Stack.Screen name="Main">
         {() => (
           <Tab.Navigator
-            screenOptions={{
-              headerShown: false,
+            screenOptions={({ navigation }) => ({
+              headerShown: true,
+              headerStyle: { backgroundColor: colors.bg, borderBottomColor: colors.dim, borderBottomWidth: 1 },
+              headerTintColor: colors.bright,
+              headerTitleStyle: { fontWeight: "800", fontSize: 18 },
+              headerTitleAlign: "left",
+              headerRight: () => (
+                <Pressable
+                  onPress={() => navigation.navigate("More")}
+                  style={{ marginRight: spacing.md, paddingHorizontal: spacing.sm, paddingVertical: 4 }}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                  <Text style={{ color: colors.accent, fontWeight: "800", fontSize: 16 }}>Más ☰</Text>
+                </Pressable>
+              ),
               tabBarActiveTintColor: colors.accent,
               tabBarInactiveTintColor: colors.textMuted,
               tabBarStyle: {
@@ -138,13 +151,13 @@ export const RootNavigator: React.FC = () => {
                 paddingBottom: 8
               },
               tabBarLabelStyle: { fontWeight: "700", fontSize: 11 }
-            }}
+            })}
           >
-            <Tab.Screen name="Coach" component={CameraScreen} options={{ tabBarLabel: "Coach" }} />
-            <Tab.Screen name="Readiness" component={ReadinessScreen} options={{ tabBarLabel: "Readiness" }} />
-            <Tab.Screen name="Health" component={HealthConnectScreen} options={{ tabBarLabel: "Salud" }} />
-            <Tab.Screen name="Workouts" component={WorkoutsScreen} options={{ tabBarLabel: "Entrenos" }} />
-            <Tab.Screen name="Nutrition" component={NutritionScreen} options={{ tabBarLabel: "Nutrición" }} />
+            <Tab.Screen name="Coach" component={CameraScreen} options={{ tabBarLabel: "Coach", headerTitle: "Coach AI" }} />
+            <Tab.Screen name="Readiness" component={ReadinessScreen} options={{ tabBarLabel: "Readiness", headerTitle: "Readiness" }} />
+            <Tab.Screen name="Health" component={HealthConnectScreen} options={{ tabBarLabel: "Salud", headerTitle: "Salud & Wearables" }} />
+            <Tab.Screen name="Workouts" component={WorkoutsScreen} options={{ tabBarLabel: "Entrenos", headerTitle: "Entrenos" }} />
+            <Tab.Screen name="Nutrition" component={NutritionScreen} options={{ tabBarLabel: "Nutrición", headerTitle: "Nutrición" }} />
           </Tab.Navigator>
         )}
       </Stack.Screen>

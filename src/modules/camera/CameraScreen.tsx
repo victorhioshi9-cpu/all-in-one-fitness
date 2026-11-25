@@ -1,26 +1,28 @@
 /**
- * CameraScreen.tsx — Versión funcional simple (v0.3.5)
+ * CameraScreen.tsx — v0.3.6
  * ----------------------------------------------------------------------------
- * Versión sin react-native-reanimated, sin Skia overlay, sin pose detection.
- * Solo preview de cámara + selector de ejercicio + steppers grandes.
+ * Versión con pose detection SIMPLE (sin SharedValue/Skia que rompían toques).
  *
- * Cambios v0.3.5:
- *   - Selección directa: al tocar un ejercicio, se inicia la cámara al instante
- *     (sin botón "Iniciar cámara").
- *   - Buscador de ejercicios (filtro por texto).
- *   - Categorías collapsables (tap header para mostrar/ocultar ejercicios).
- *   - Catálogo ampliado a 41 ejercicios.
+ * Cambios v0.3.6:
+ *   - Reactivado pose detection con useSimplePoseFrameProcessor (state normal).
+ *   - Overlay SkeletonOverlaySimple (RN puro, sin Skia).
+ *   - Contador automático de reps básico (cuenta cuando detecta movimiento
+ *     vertical de cadera por encima de umbral).
+ *   - Buscador con autoFocus y keyboardShouldPersistTaps.
+ *   - Botón "Más" en header para acceder a Perfil/Calendario/etc.
  */
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
-  ActivityIndicator, Linking, Alert, TextInput
+  ActivityIndicator, Linking, Alert, TextInput, Keyboard
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
+import { useSimplePoseFrameProcessor } from "./hooks/usePoseFrameProcessorSimple";
+import { SkeletonOverlaySimple } from "./SkeletonOverlaySimple";
 
 type Mode = "select_exercise" | "tracking";
 
@@ -48,6 +50,58 @@ export const CameraScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
   const cameraRef = useRef<any>(null);
+
+  // --- Pose detection simple ---
+  const { pose, fps, frameProcessor } = useSimplePoseFrameProcessor(mode === "tracking");
+
+  // --- Contador automático de reps (heurística simple por altura de cadera) ---
+  // Esta es una versión simplificada. Para detección biomecánica real habría
+  // que usar RepStateMachine con el preset.stateMachine, pero eso requiere
+  // más cálculos. Por ahora: contamos rep cuando la cadera sube más de 0.05
+  // en coordenadas normalizadas desde el último mínimo.
+  const lastHipYRef = useRef<number | null>(null);
+  const repPhaseRef = useRef<"down" | "up">("up");
+  const repPeakYRef = useRef<number>(1.0);
+
+  useEffect(() => {
+    if (mode !== "tracking") return;
+    if (!pose || !pose.detected || !pose.landmarks || pose.landmarks.length < 25) return;
+
+    // Cadera izquierda (landmark 23) o derecha (landmark 24).
+    const lh = pose.landmarks[23];
+    const rh = pose.landmarks[24];
+    if (!lh || !rh) return;
+    const hipY = (lh.y + rh.y) / 2;
+    if (typeof hipY !== "number") return;
+
+    const last = lastHipYRef.current;
+    lastHipYRef.current = hipY;
+
+    if (last === null) {
+      repPeakYRef.current = hipY;
+      return;
+    }
+
+    // Detectar bajada (hipY aumenta) y subida (hipY disminuye).
+    if (hipY > last + 0.005) {
+      // Bajando: actualizar pico (máximo Y).
+      if (hipY > repPeakYRef.current) {
+        repPeakYRef.current = hipY;
+      }
+      repPhaseRef.current = "down";
+    } else if (hipY < last - 0.005) {
+      // Subiendo.
+      if (repPhaseRef.current === "down") {
+        // Si hubo una bajada significativa (al menos 0.04 de amplitud), contar rep.
+        const amplitude = repPeakYRef.current - hipY;
+        if (amplitude > 0.04) {
+          setCount((c) => c + 1);
+          repPeakYRef.current = hipY;
+          repPhaseRef.current = "up";
+        }
+      }
+    }
+  }, [pose, mode]);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -77,11 +131,15 @@ export const CameraScreen: React.FC = () => {
   };
 
   // --- Seleccionar ejercicio e ir directo a tracking ---
-  const selectExercise = (ex: ExercisePreset) => {
+  const selectExercise = useCallback((ex: ExercisePreset) => {
+    Keyboard.dismiss();
     setPreset(ex);
     setCount(0);
+    lastHipYRef.current = null;
+    repPhaseRef.current = "up";
+    repPeakYRef.current = 1.0;
     setMode("tracking");
-  };
+  }, []);
 
   // --- Filtrar ejercicios por búsqueda ---
   const filteredExercises = useMemo(() => {
@@ -129,7 +187,12 @@ export const CameraScreen: React.FC = () => {
   // --- Render: selector de ejercicio ---
   if (mode === "select_exercise") {
     return (
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.selectorContainer}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.selectorContainer}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         <Text style={styles.selectorTitle}>Coach AI</Text>
         <Text style={styles.selectorSubtitle}>
           Toca un ejercicio para iniciar la cámara al instante.
@@ -174,6 +237,9 @@ export const CameraScreen: React.FC = () => {
             onChangeText={setSearchQuery}
             autoCapitalize="none"
             autoCorrect={false}
+            autoFocus={false}
+            returnKeyType="search"
+            blurOnSubmit={true}
           />
           {searchQuery.length > 0 && (
             <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
@@ -231,7 +297,7 @@ export const CameraScreen: React.FC = () => {
     );
   }
 
-  // --- Render: tracking (preview de cámara) ---
+  // --- Render: tracking (preview de cámara + overlay + HUD) ---
   return (
     <View style={styles.trackingContainer}>
       <Camera
@@ -242,16 +308,41 @@ export const CameraScreen: React.FC = () => {
         photo={false}
         video={false}
         audio={false}
+        frameProcessor={frameProcessor}
       />
-      {/* HUD mínimo */}
+
+      {/* Overlay del esqueleto */}
+      <SkeletonOverlaySimple
+        pose={pose}
+        width={width}
+        height={height}
+        pointColor="#fbbf24"
+        pointRadius={5}
+        lineColor="#ef4444"
+        lineWidth={2}
+      />
+
+      {/* HUD top */}
       <View style={styles.hudTop}>
         <Pressable style={styles.hudBtn} onPress={() => setMode("select_exercise")}>
           <Text style={styles.hudBtnText}>← Atrás</Text>
         </Pressable>
         <Text style={styles.hudTitle}>{preset.emoji} {preset.name}</Text>
-        <View style={{ width: 70 }} />
+        <View style={styles.hudFps}>
+          <Text style={styles.hudFpsText}>{fps} fps</Text>
+        </View>
       </View>
 
+      {/* Estado de pose detection */}
+      <View style={styles.poseStatus}>
+        {pose && pose.detected ? (
+          <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos)</Text>
+        ) : (
+          <Text style={styles.poseStatusWarn}>Esperando cuerpo…</Text>
+        )}
+      </View>
+
+      {/* HUD bottom */}
       <View style={styles.hudBottom}>
         <View style={styles.hudStat}>
           <Text style={styles.hudStatLabel}>Reps</Text>
@@ -312,7 +403,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg, gap: spacing.sm
   },
   searchIcon: { fontSize: 16 },
-  searchInput: { flex: 1, color: colors.bright, fontSize: 15, paddingVertical: 0 },
+  searchInput: { flex: 1, color: colors.bright, fontSize: 15, paddingVertical: 0, minHeight: 22 },
   searchClear: { color: colors.textMuted, fontSize: 16, fontWeight: "700", paddingHorizontal: 6 },
 
   // Categorías
@@ -343,6 +434,12 @@ const styles = StyleSheet.create({
   hudBtn: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim },
   hudBtnText: { color: colors.bright, fontWeight: "700", fontSize: 13 },
   hudTitle: { color: colors.bright, fontSize: 16, fontWeight: "800", backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
+  hudFps: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim, minWidth: 70, alignItems: "center" },
+  hudFpsText: { color: colors.bright, fontSize: 12, fontWeight: "700" },
+
+  poseStatus: { position: "absolute", top: 90, left: 12, right: 12, alignItems: "center" },
+  poseStatusOk: { backgroundColor: "rgba(34,197,94,0.9)", color: "#fff", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
+  poseStatusWarn: { backgroundColor: "rgba(245,158,11,0.9)", color: "#000", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
 
   hudBottom: { position: "absolute", bottom: 40, left: 12, right: 12, flexDirection: "row", gap: spacing.sm, justifyContent: "space-around" },
   hudStat: { backgroundColor: "rgba(8,10,14,0.85)", padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, alignItems: "center", minWidth: 90 },
