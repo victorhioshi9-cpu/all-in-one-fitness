@@ -11,9 +11,9 @@
  *   - Estado del sync worker (running / last run pushed/failed).
  *   - Pendientes de subir a la nube (count de sync_queue).
  */
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
-  View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl
+  View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl, AppState
 } from "react-native";
 import { colors, spacing, radius } from "@/theme/colors";
 import {
@@ -90,6 +90,30 @@ export const HealthConnectScreen: React.FC = () => {
       loadTodayMetrics();
     }
   }, [permState, loadTodayMetrics]);
+
+  // --- AppState listener: refrescar automáticamente al volver de HC ---
+  // Cuando el usuario pulsa 'Conceder permisos', abrimos los ajustes de HC.
+  // El usuario concede los permisos ahí y vuelve a la app. Sin este listener,
+  // el estado 'Sin solicitar' persiste hasta que el usuario pulsa 'Recomprobar
+  // ahora' manualmente. Con este listener, al volver a la app (AppState = active),
+  // refrescamos automáticamente y el cartel rojo desaparece solo.
+  const appStateRef = useRef(AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextAppState;
+      // Si la app pasa de background/inactive a active → refrescar.
+      if (prev.match(/inactive|background/) && nextAppState === "active") {
+        console.log("[HealthConnectScreen] app volvió a active, refrescando permisos...");
+        // Invalidar caché de availability por si el usuario instaló HC.
+        invalidateAvailabilityCache();
+        refresh();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [refresh]);
 
   return (
     <ScrollView

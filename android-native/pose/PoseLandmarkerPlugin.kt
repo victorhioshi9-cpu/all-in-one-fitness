@@ -97,12 +97,33 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
       return it
     }
     Log.i(TAG, "getOrCreateLandmarker: creando nueva instancia. Modelo: $MODEL_PATH")
+
+    // Verificar que el modelo existe en assets ANTES de intentar cargarlo.
+    try {
+      val assetList = context.assets.list("")
+      val modelExists = assetList?.contains(MODEL_PATH) == true
+      Log.i(TAG, "Modelo $MODEL_PATH en assets: $modelExists (assets tiene ${assetList?.size ?: 0} archivos)")
+      if (!modelExists) {
+        Log.e(TAG, "ERROR CRÍTICO: el modelo $MODEL_PATH NO está en assets/. " +
+          "El plugin with-native-pose.js debió descargarlo a android/app/src/main/assets/. " +
+          "Verifica que el config plugin se ejecutó correctamente durante prebuild.")
+        return null
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "No se pudo listar assets: ${e.message}", e)
+    }
+
+    // ESTRATEGIA v0.4.1: Usar SOLO CPU delegate. GPU delegate es inestable
+    // en muchos dispositivos (especialmente sin Play Services actualizados)
+    // y hace que getOrCreateLandmarker() devuelva null silenciosamente.
+    // CPU es más lento pero 100% confiable.
+    Log.i(TAG, "Usando Delegate.CPU (más estable que GPU)")
     return try {
-      Log.d(TAG, "Configurando BaseOptions con modelAssetPath=$MODEL_PATH delegate=${if (isGpu()) "GPU" else "CPU"}")
       val baseOptions = BaseOptions.builder()
         .setModelAssetPath(MODEL_PATH)
-        .setDelegate(tryDelegateGpu())
+        .setDelegate(Delegate.CPU)
         .build()
+      Log.d(TAG, "BaseOptions configurado OK")
 
       val options = PoseLandmarker.PoseLandmarkerOptions.builder()
         .setBaseOptions(baseOptions)
@@ -115,41 +136,21 @@ class PoseLandmarkerPlugin(private val context: Context) : FrameProcessorPlugin(
           // ResultListener se invoca en el hilo de MediaPipe. Guardamos el último
           // resultado para que callback() lo consuma síncrono en el hilo del frame.
           lastResultRef.set(result)
+          Log.d(TAG, "ResultListener: pose detectada con ${result.landmarks()?.firstOrNull()?.size ?: 0} landmarks")
         }
         .setErrorListener { error ->
           Log.e(TAG, "MediaPipe error: ${error.message}")
         }
         .build()
+      Log.d(TAG, "PoseLandmarkerOptions configurado OK")
 
       val landmarker = PoseLandmarker.createFromOptions(context, options)
       landmarkerRef.set(landmarker)
-      Log.i(TAG, "PoseLandmarker creado OK (delegate=${if (isGpu()) "GPU" else "CPU"})")
+      Log.i(TAG, "✓ PoseLandmarker creado OK con CPU delegate")
       landmarker
     } catch (e: Throwable) {
-      Log.e(TAG, "No se pudo crear PoseLandmarker (GPU falló, intentando CPU)", e)
-      try {
-        val baseOptions = BaseOptions.builder()
-          .setModelAssetPath(MODEL_PATH)
-          .setDelegate(Delegate.CPU)
-          .build()
-        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
-          .setBaseOptions(baseOptions)
-          .setRunningMode(RunningMode.LIVE_STREAM)
-          .setNumPoses(NUM_POSES)
-          .setMinPoseDetectionConfidence(MIN_DETECTION_CONFIDENCE)
-          .setMinPosePresenceConfidence(MIN_PRESENCE_CONFIDENCE)
-          .setMinTrackingConfidence(MIN_TRACKING_CONFIDENCE)
-          .setResultListener { result, _ -> lastResultRef.set(result) }
-          .setErrorListener { error -> Log.e(TAG, "MediaPipe error (CPU): ${error.message}") }
-          .build()
-        val landmarker = PoseLandmarker.createFromOptions(context, options)
-        landmarkerRef.set(landmarker)
-        Log.i(TAG, "PoseLandmarker creado OK con CPU fallback")
-        landmarker
-      } catch (e2: Throwable) {
-        Log.e(TAG, "PoseLandmarker CPU fallback también falló", e2)
-        null
-      }
+      Log.e(TAG, "✗ PoseLandmarker creation FAILED con CPU: ${e.javaClass.simpleName} - ${e.message}", e)
+      null
     }
   }
 

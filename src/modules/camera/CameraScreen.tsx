@@ -11,16 +11,17 @@
  *   - Categorías collapsables (tap header para mostrar/ocultar ejercicios).
  *   - Catálogo ampliado a 41 ejercicios.
  */
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
-  ActivityIndicator, Linking, Alert, TextInput
+  ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
+import { SkeletonOverlaySimple } from "./SkeletonOverlaySimple";
 
 type Mode = "select_exercise" | "tracking";
 
@@ -49,6 +50,76 @@ export const CameraScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
   const cameraRef = useRef<any>(null);
+
+  // reloadKey: cuando cambia, se re-monta TODO el componente (incluida la cámara).
+  // Útil para forzar re-inicialización cuando la cámara se queda colgada.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // AppState listener: al volver a la app (de background a active), re-montar
+  // la cámara para forzar re-inicialización. Esto resuelve el bug de "tengo
+  // que abrir y cerrar la app para que cargue la cámara".
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      if (nextAppState === "active") {
+        console.log("[CameraScreen] app volvió a active, re-montando cámara...");
+        setReloadKey((k) => k + 1);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
+  // --- Pose detection simple ---
+  // Importado aquí dentro para que si el hook crashea, no derribe toda la app.
+  let pose: any = null;
+  let fps = 0;
+  let frameProcessor: any = undefined;
+  try {
+    const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
+    const result = useSimplePoseFrameProcessor(mode === "tracking");
+    pose = result.pose;
+    fps = result.fps;
+    frameProcessor = result.frameProcessor;
+  } catch (err: any) {
+    console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
+  }
+
+  // --- Contador automático de reps (heurística por altura de cadera) ---
+  const lastHipYRef = useRef<number | null>(null);
+  const repPhaseRef = useRef<"down" | "up">("up");
+  const repPeakYRef = useRef<number>(1.0);
+
+  useEffect(() => {
+    if (mode !== "tracking") return;
+    if (!pose || !pose.detected || !pose.landmarks || pose.landmarks.length < 25) return;
+
+    const lh = pose.landmarks[23];
+    const rh = pose.landmarks[24];
+    if (!lh || !rh) return;
+    const hipY = (lh.y + rh.y) / 2;
+    if (typeof hipY !== "number") return;
+
+    const last = lastHipYRef.current;
+    lastHipYRef.current = hipY;
+
+    if (last === null) {
+      repPeakYRef.current = hipY;
+      return;
+    }
+
+    if (hipY > last + 0.005) {
+      if (hipY > repPeakYRef.current) repPeakYRef.current = hipY;
+      repPhaseRef.current = "down";
+    } else if (hipY < last - 0.005) {
+      if (repPhaseRef.current === "down") {
+        const amplitude = repPeakYRef.current - hipY;
+        if (amplitude > 0.04) {
+          setCount((c) => c + 1);
+          repPeakYRef.current = hipY;
+          repPhaseRef.current = "up";
+        }
+      }
+    }
+  }, [pose, mode]);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -234,7 +305,7 @@ export const CameraScreen: React.FC = () => {
 
   // --- Render: tracking (preview de cámara) ---
   return (
-    <View style={styles.trackingContainer}>
+    <View key={reloadKey} style={styles.trackingContainer}>
       <Camera
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
@@ -243,7 +314,37 @@ export const CameraScreen: React.FC = () => {
         photo={false}
         video={false}
         audio={false}
+        frameProcessor={frameProcessor}
       />
+
+      {/* Overlay del esqueleto (puntos amarillos + líneas rojas) */}
+      <SkeletonOverlaySimple
+        pose={pose}
+        width={width}
+        height={height}
+        pointColor="#fbbf24"
+        pointRadius={5}
+        lineColor="#ef4444"
+        lineWidth={2}
+      />
+
+      {/* Estado de pose detection */}
+      <View style={styles.poseStatus}>
+        {pose && pose.detected ? (
+          <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos) · {fps} fps</Text>
+        ) : (
+          <Text style={styles.poseStatusWarn}>
+            {frameProcessor ? `Esperando cuerpo… · ${fps} fps` : "Pose detection no disponible"}
+          </Text>
+        )}
+      </View>
+
+      {/* Guía de cómo hacer el ejercicio */}
+      <View style={styles.guideBox}>
+        <Text style={styles.guideTitle}>📋 Cómo hacer {preset.name}</Text>
+        <Text style={styles.guideText}>{preset.calibrationHint}</Text>
+        <Text style={styles.guideMeta}>Músculo: {preset.primaryMuscle} · Categoría: {preset.category}</Text>
+      </View>
       {/* HUD mínimo */}
       <View style={styles.hudTop}>
         <Pressable style={styles.hudBtn} onPress={() => setMode("select_exercise")}>
@@ -350,6 +451,19 @@ const styles = StyleSheet.create({
   hudBtn: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim },
   hudBtnText: { color: colors.bright, fontWeight: "700", fontSize: 13 },
   hudTitle: { color: colors.bright, fontSize: 16, fontWeight: "800", backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
+
+  poseStatus: { position: "absolute", top: 90, left: 12, right: 12, alignItems: "center" },
+  poseStatusOk: { backgroundColor: "rgba(34,197,94,0.9)", color: "#fff", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
+  poseStatusWarn: { backgroundColor: "rgba(245,158,11,0.9)", color: "#000", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
+
+  guideBox: {
+    position: "absolute", top: 130, left: 12, right: 12,
+    backgroundColor: "rgba(8,10,14,0.92)", padding: spacing.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.accent
+  },
+  guideTitle: { color: colors.bright, fontSize: 13, fontWeight: "800", marginBottom: 4 },
+  guideText: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginBottom: 4 },
+  guideMeta: { color: colors.dim, fontSize: 11, fontStyle: "italic" },
 
   hudBottom: { position: "absolute", bottom: 40, left: 12, right: 12, flexDirection: "row", gap: spacing.sm, justifyContent: "space-around" },
   hudStat: { backgroundColor: "rgba(8,10,14,0.85)", padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim, alignItems: "center", minWidth: 90 },
