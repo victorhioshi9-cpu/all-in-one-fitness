@@ -55,13 +55,19 @@ export const CameraScreen: React.FC = () => {
   // Útil para forzar re-inicialización cuando la cámara se queda colgada.
   const [reloadKey, setReloadKey] = useState(0);
 
-  // AppState listener: al volver a la app (de background a active), re-montar
-  // la cámara para forzar re-inicialización. Esto resuelve el bug de "tengo
-  // que abrir y cerrar la app para que cargue la cámara".
+  // AppState listener: al volver a la app DESDE BACKGROUND (no desde inactive),
+  // re-montar la cámara. Solo disparamos en transición background→active,
+  // NO en inactive→active (eso pasa al abrir modals/alerts y causaría recargas
+  // constantes que cierran la cámara).
+  const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
-      if (nextAppState === "active") {
-        console.log("[CameraScreen] app volvió a active, re-montando cámara...");
+      const prev = appStateRef.current;
+      appStateRef.current = nextAppState;
+      // SOLO recargar si venimos de "background" (la app estuvo en segundo plano).
+      // "inactive" es transitorio (modal, alert) y NO debe recargar la cámara.
+      if (prev === "background" && nextAppState === "active") {
+        console.log("[CameraScreen] app volvió de background, re-montando cámara...");
         setReloadKey((k) => k + 1);
       }
     });

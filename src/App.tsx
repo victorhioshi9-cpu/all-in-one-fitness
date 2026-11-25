@@ -19,6 +19,11 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { StyleSheet, Linking, Text, ScrollView } from "react-native";
 
+// debugLogger intercepta console.log/warn/error globalmente para que los logs
+// se vean en el DebugLogPanel (botón 🐞 flotante). Importar lo antes posible.
+import "@/utils/debugLogger";
+import { DebugLogPanel } from "@/utils/DebugLogPanel";
+
 import { RootNavigator } from "@/navigation/RootNavigator";
 import { useSettingsStore } from "@/store/settingsStore";
 import { OnboardingScreen } from "@/modules/onboarding/OnboardingScreen";
@@ -157,6 +162,7 @@ export default function App() {
           <SafeAreaProvider>
             <StatusBar style="light" />
             <OnboardingScreen />
+            <DebugLogPanel />
           </SafeAreaProvider>
         </GestureHandlerRootView>
       </ScreenErrorBoundary>
@@ -171,6 +177,7 @@ export default function App() {
           <NavigationContainer theme={navTheme}>
             <RootNavigator />
           </NavigationContainer>
+          <DebugLogPanel />
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </ScreenErrorBoundary>
