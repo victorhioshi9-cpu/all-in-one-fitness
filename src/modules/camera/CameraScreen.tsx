@@ -1,15 +1,9 @@
 /**
- * CameraScreen.tsx — v0.3.6
+ * CameraScreen.tsx — v0.3.7
  * ----------------------------------------------------------------------------
  * Versión con pose detection SIMPLE (sin SharedValue/Skia que rompían toques).
- *
- * Cambios v0.3.6:
- *   - Reactivado pose detection con useSimplePoseFrameProcessor (state normal).
- *   - Overlay SkeletonOverlaySimple (RN puro, sin Skia).
- *   - Contador automático de reps básico (cuenta cuando detecta movimiento
- *     vertical de cadera por encima de umbral).
- *   - Buscador con autoFocus y keyboardShouldPersistTaps.
- *   - Botón "Más" en header para acceder a Perfil/Calendario/etc.
+ * Con ErrorBoundary local para que si algo falla en el hook de pose, NO
+ * derribe toda la app — muestra fallback con botón "Recargar".
  */
 import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import {
@@ -21,7 +15,6 @@ import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
-import { useSimplePoseFrameProcessor } from "./hooks/usePoseFrameProcessorSimple";
 import { SkeletonOverlaySimple } from "./SkeletonOverlaySimple";
 
 type Mode = "select_exercise" | "tracking";
@@ -36,7 +29,51 @@ const CATEGORY_META: Record<ExerciseCategory, { label: string; emoji: string; co
   cardio: { label: "Cardio", emoji: "🔥", color: colors.error }
 };
 
-export const CameraScreen: React.FC = () => {
+// ============================================================================
+// ErrorBoundary local — si el hook de pose crashea, no derriba toda la app.
+// ============================================================================
+class CameraErrorBoundary extends React.Component<
+  { children: React.ReactNode; onReset: () => void },
+  { error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode; onReset: () => void }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    console.error("[CameraErrorBoundary] error de render en CameraScreen:", error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.center}>
+          <Text style={styles.title}>Error en Coach AI</Text>
+          <Text style={styles.hint}>
+            {this.state.error.message || String(this.state.error)}
+          </Text>
+          <Pressable
+            style={styles.btn}
+            onPress={() => {
+              this.setState({ error: null });
+              this.props.onReset();
+            }}
+          >
+            <Text style={styles.btnText}>Recargar Coach</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ============================================================================
+// Inner component (la que usa hooks de pose)
+// ============================================================================
+const CameraScreenInner: React.FC = () => {
   useKeepAwake();
   const { width, height } = useWindowDimensions();
   const cameraPerm = useCameraPermission();
@@ -52,13 +89,25 @@ export const CameraScreen: React.FC = () => {
   const cameraRef = useRef<any>(null);
 
   // --- Pose detection simple ---
-  const { pose, fps, frameProcessor } = useSimplePoseFrameProcessor(mode === "tracking");
+  // Importado aquí dentro para que si el hook crashea, el ErrorBoundary lo capture.
+  // (El hook está definido en un archivo aparte y se importa arriba.)
+  let pose: any = null;
+  let fps = 0;
+  let frameProcessor: any = undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
+    const result = useSimplePoseFrameProcessor(mode === "tracking");
+    pose = result.pose;
+    fps = result.fps;
+    frameProcessor = result.frameProcessor;
+  } catch (err: any) {
+    // Si el hook falla al inicializar (p.ej. API de worklets no disponible),
+    // capturamos el error y seguimos sin pose detection. La cámara aún funciona.
+    console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
+  }
 
   // --- Contador automático de reps (heurística simple por altura de cadera) ---
-  // Esta es una versión simplificada. Para detección biomecánica real habría
-  // que usar RepStateMachine con el preset.stateMachine, pero eso requiere
-  // más cálculos. Por ahora: contamos rep cuando la cadera sube más de 0.05
-  // en coordenadas normalizadas desde el último mínimo.
   const lastHipYRef = useRef<number | null>(null);
   const repPhaseRef = useRef<"down" | "up">("up");
   const repPeakYRef = useRef<number>(1.0);
@@ -67,7 +116,6 @@ export const CameraScreen: React.FC = () => {
     if (mode !== "tracking") return;
     if (!pose || !pose.detected || !pose.landmarks || pose.landmarks.length < 25) return;
 
-    // Cadera izquierda (landmark 23) o derecha (landmark 24).
     const lh = pose.landmarks[23];
     const rh = pose.landmarks[24];
     if (!lh || !rh) return;
@@ -82,17 +130,13 @@ export const CameraScreen: React.FC = () => {
       return;
     }
 
-    // Detectar bajada (hipY aumenta) y subida (hipY disminuye).
     if (hipY > last + 0.005) {
-      // Bajando: actualizar pico (máximo Y).
       if (hipY > repPeakYRef.current) {
         repPeakYRef.current = hipY;
       }
       repPhaseRef.current = "down";
     } else if (hipY < last - 0.005) {
-      // Subiendo.
       if (repPhaseRef.current === "down") {
-        // Si hubo una bajada significativa (al menos 0.04 de amplitud), contar rep.
         const amplitude = repPeakYRef.current - hipY;
         if (amplitude > 0.04) {
           setCount((c) => c + 1);
@@ -311,7 +355,7 @@ export const CameraScreen: React.FC = () => {
         frameProcessor={frameProcessor}
       />
 
-      {/* Overlay del esqueleto */}
+      {/* Overlay del esqueleto (solo si hay pose detection disponible) */}
       <SkeletonOverlaySimple
         pose={pose}
         width={width}
@@ -338,7 +382,9 @@ export const CameraScreen: React.FC = () => {
         {pose && pose.detected ? (
           <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos)</Text>
         ) : (
-          <Text style={styles.poseStatusWarn}>Esperando cuerpo…</Text>
+          <Text style={styles.poseStatusWarn}>
+            {frameProcessor ? "Esperando cuerpo…" : "Pose detection no disponible (cámara modo manual)"}
+          </Text>
         )}
       </View>
 
@@ -368,6 +414,23 @@ export const CameraScreen: React.FC = () => {
         </View>
       </View>
     </View>
+  );
+};
+
+// ============================================================================
+// Export wrapper con ErrorBoundary
+// ============================================================================
+export const CameraScreen: React.FC = () => {
+  // Key para forzar re-mount del ErrorBoundary y limpiar el error al recargar.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  return (
+    <CameraErrorBoundary
+      key={reloadKey}
+      onReset={() => setReloadKey((k) => k + 1)}
+    >
+      <CameraScreenInner />
+    </CameraErrorBoundary>
   );
 };
 
