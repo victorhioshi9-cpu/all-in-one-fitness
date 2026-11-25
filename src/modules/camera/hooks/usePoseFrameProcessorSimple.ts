@@ -3,30 +3,27 @@
  * ----------------------------------------------------------------------------
  * Hook SIMPLIFICADO de pose detection para VisionCamera v4.5.
  *
- * DIFERENCIA con usePoseFrameProcessor.ts:
- *   - NO usa useSharedValue (react-native-reanimated). El SharedValue + Skia
- *     Canvas rompía gesture handling en New Arch → los toques no funcionaban.
- *   - Usa state normal de React (useState + useCallback).
- *   - El frame processor llama al plugin nativo y dispatcha el resultado al
- *     hilo JS con useRunInJS. El hilo JS actualiza el state, y React re-renderiza.
- *
- * API REAL de react-native-worklets-core v0.4.0:
- *   - import { useRunInJS } from "react-native-worklets-core"
- *   - useRunInJS(callback, deps) → devuelve función callable desde worklet
- *   - NO existe Worklets.useRunOnJS (eso causaba 'render undefined is not a function')
+ * v0.4.0 — Usa runOnJS de react-native-reanimated (NO de worklets-core).
+ *   reanimated está mejor mantenido y su runOnJS es más estable.
+ *   Esto evita el bug de 'render undefined is not a function' que tenía
+ *   con Worklets.useRunOnJS (que no existe) y el tipo incorrecto de useRunInJS.
  *
  * RENDIMIENTO:
- *   - Esto es MENOS eficiente que SharedValue (copia por JS bridge ~30-60fps).
- *   - PERO es estable y no rompe gesture handling.
+ *   - State normal de React (NO useSharedValue). 30-60fps suficientes.
+ *   - NO rompe gesture handling (lo que sí hacía useSharedValue + Skia).
  *
  * REQUISITOS:
- *   - El plugin nativo "poseLandmarker" debe estar registrado. Si no lo está
- *     (porque with-native-pose.js está desactivado en app.config.ts), el
- *     callback devuelve null y la app no crashea (graceful degradation).
+ *   - El plugin nativo "poseLandmarker" debe estar registrado.
+ *   - El modelo pose_landmarker.task debe estar en assets/.
+ *
+ * GRACEFUL DEGRADATION:
+ *   Si el plugin no está registrado o el hook falla al inicializar, devuelve
+ *   pose=null y frameProcessor=undefined. La cámara abre sin esqueleto pero
+ *   sin crash.
  */
 import { useState, useRef, useEffect } from "react";
 import { useFrameProcessor } from "react-native-vision-camera";
-import { useRunInJS } from "react-native-worklets-core";
+import { runOnJS } from "react-native-reanimated";
 import type { PoseFrame } from "@/modules/biomechanics/landmarks";
 
 export interface UseSimplePoseResult {
@@ -34,100 +31,111 @@ export interface UseSimplePoseResult {
   pose: PoseFrame | null;
   /** FPS aproximado del frame processor. */
   fps: number;
-  /** El frameProcessor para pasar al componente <Camera frameProcessor={...} />. */
-  frameProcessor: ReturnType<typeof useFrameProcessor>;
+  /** El frameProcessor para pasar al componente <Camera frameProcessor={...} />.
+   *  Es undefined si el hook falló al inicializar. */
+  frameProcessor: ReturnType<typeof useFrameProcessor> | undefined;
 }
 
 export function useSimplePoseFrameProcessor(active: boolean): UseSimplePoseResult {
   const [pose, setPose] = useState<PoseFrame | null>(null);
   const [fps, setFps] = useState(0);
   const lastTsRef = useRef<number>(0);
+  const frameCountRef = useRef<number>(0);
 
   // --- Diagnóstico: log para saber si el plugin nativo está disponible ---
-  // Si el plugin NO está registrado, el frameProcessor devolverá null siempre
-  // y veremos 'Esperando cuerpo…' para siempre. Este log nos dice en runtime
-  // si el problema es que el plugin nativo no se cargó.
   useEffect(() => {
     if (!active) return;
-    console.log("[useSimplePose] hook activo. Verificando disponibilidad del plugin nativo 'poseLandmarker'...");
+    console.log("[useSimplePose] hook activo. Plugin nativo 'poseLandmarker' debería estar registrado.");
     // Si tras 3s no hay pose detectada, logueamos warning.
     const timeout = setTimeout(() => {
-      console.warn(
-        "[useSimplePose] Pasaron 3s sin pose detectada. Posibles causas:\n" +
-        "  1. El plugin nativo 'poseLandmarker' no está registrado (revisa MainApplication.kt).\n" +
-        "  2. La persona no está enfrente de la cámara.\n" +
-        "  3. El modelo pose_landmarker.task no está en assets/.\n" +
-        "  4. El frameProcessor se está ejecutando pero el plugin devuelve null."
-      );
+      if (frameCountRef.current === 0) {
+        console.warn(
+          "[useSimplePose] Pasaron 3s sin NINGÚN frame procesado. El frameProcessor " +
+          "NO se está ejecutando. Posibles causas:\n" +
+          "  1. El plugin nativo 'poseLandmarker' no está registrado (revisa MainApplication.kt).\n" +
+          "  2. La cámara no está activa.\n" +
+          "  3. enableFrameProcessors no está activado en el plugin de vision-camera."
+        );
+      } else if (!pose) {
+        console.warn(
+          "[useSimplePose] Frames procesados: " + frameCountRef.current + " pero sin pose detectada. " +
+          "Causas:\n" +
+          "  1. Persona no enfrente de cámara.\n" +
+          "  2. Modelo pose_landmarker.task no carga (revisa logcat con tag PoseLandmarkerPlugin).\n" +
+          "  3. El plugin devuelve null (revisa logcat)."
+        );
+      }
     }, 3000);
     return () => clearTimeout(timeout);
-  }, [active]);
+  }, [active, pose]);
 
-  // Callback que corre en hilo JS. Lo creamos una sola vez.
-  // useRunInJS devuelve una función que se puede llamar desde el worklet
-  // para ejecutar el callback en el hilo JS.
-  //
-  // NOTA: el tipo TypeScript de useRunInJS está mal (dice TArguments extends []
-  // = sin args) pero en runtime SÍ acepta argumentos (usa Worklets.createRunInJsFn
-  // internamente). Usamos `as any` para bypassear el tipo incorrecto.
-  const jsCallback = useRunInJS(((p: PoseFrame | null) => {
-    setPose(p);
-  }) as any, []) as (p: PoseFrame | null) => void;
+  // Frame processor. Usa runOnJS de reanimated (más estable que useRunInJS).
+  // Si el plugin nativo no está registrado, el try/catch del worklet atrapa
+  // el error y devuelve null sin crashear.
+  let frameProcessor: any = undefined;
+  try {
+    frameProcessor = useFrameProcessor((frame) => {
+      "worklet";
 
-  const fpsTick = useRunInJS(((ts: number) => {
-    if (lastTsRef.current > 0) {
-      const delta = ts - lastTsRef.current;
-      if (delta > 0) setFps(Math.round(1000 / delta));
-    }
-    lastTsRef.current = ts;
-  }) as any, []) as (ts: number) => void;
+      if (!active) return;
 
-  const frameProcessor = useFrameProcessor((frame) => {
-    "worklet";
+      // Contar frames procesados para diagnóstico.
+      runOnJS(() => {
+        frameCountRef.current++;
+      })();
 
-    if (!active) return;
+      // Invoca el plugin nativo "poseLandmarker" si está registrado.
+      let result: any = null;
+      try {
+        result = (frame as any).__callFrameProcessorPlugin?.("poseLandmarker", {
+          orientation: "portrait"
+        });
+      } catch (e) {
+        // Plugin no registrado o frame inválido. Graceful.
+        return;
+      }
 
-    // Invoca el plugin nativo "poseLandmarker" si está registrado.
-    // Si no lo está, devuelve undefined y devolvemos null sin crashear.
-    let result: any = null;
-    try {
-      result = (frame as any).__callFrameProcessorPlugin?.("poseLandmarker", {
-        orientation: "portrait"
-      });
-    } catch (e) {
-      // Plugin no registrado o frame inválido. Graceful.
-      return;
-    }
+      if (!result) {
+        runOnJS(setPose)(null);
+        return;
+      }
 
-    if (!result) {
-      jsCallback(null);
-      return;
-    }
+      if (!result.detected) {
+        runOnJS(setPose)({
+          detected: false,
+          timestampMs: result.timestampMs ?? Date.now(),
+          landmarks: []
+        });
+        return;
+      }
 
-    if (!result.detected) {
-      jsCallback({
-        detected: false,
-        timestampMs: result.timestampMs ?? Date.now(),
-        landmarks: []
-      });
-      return;
-    }
+      const landmarks = ((result.landmarks || []) as any[]).map((l) => ({
+        x: Number(l.x), y: Number(l.y), z: Number(l.z),
+        v: Number(l.v ?? 0), p: Number(l.p ?? 0)
+      }));
 
-    const landmarks = ((result.landmarks || []) as any[]).map((l) => ({
-      x: Number(l.x), y: Number(l.y), z: Number(l.z),
-      v: Number(l.v ?? 0), p: Number(l.p ?? 0)
-    }));
+      const poseFrame: PoseFrame = {
+        detected: true,
+        timestampMs: Number(result.timestampMs),
+        landmarks,
+        worldLandmarks: (result.worldLandmarks || []) as any[] | undefined
+      };
 
-    const poseFrame: PoseFrame = {
-      detected: true,
-      timestampMs: Number(result.timestampMs),
-      landmarks,
-      worldLandmarks: (result.worldLandmarks || []) as any[] | undefined
-    };
+      // FPS: diferencia con el último timestamp.
+      const ts = frame.timestamp;
+      runOnJS((t: number) => {
+        if (lastTsRef.current > 0) {
+          const delta = t - lastTsRef.current;
+          if (delta > 0) setFps(Math.round(1000 / delta));
+        }
+        lastTsRef.current = t;
+      })(ts);
 
-    fpsTick(frame.timestamp);
-    jsCallback(poseFrame);
-  }, [active, jsCallback, fpsTick]);
+      runOnJS(setPose)(poseFrame);
+    }, [active]);
+  } catch (err: any) {
+    console.warn("[useSimplePose] useFrameProcessor falló al inicializar:", err?.message ?? err);
+  }
 
   return { pose, fps, frameProcessor };
 }
