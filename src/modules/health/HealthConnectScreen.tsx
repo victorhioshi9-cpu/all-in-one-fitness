@@ -49,6 +49,7 @@ export const HealthConnectScreen: React.FC = () => {
   const [todayMetrics, setTodayMetrics] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [permissionInfo, setPermissionInfo] = useState<string | null>(null);
   const nativeLoaded = isNativeModuleLoaded();
   const [requestingPerm, setRequestingPerm] = useState(false);
 
@@ -168,22 +169,36 @@ export const HealthConnectScreen: React.FC = () => {
             ⚠️ {permissionError}
           </Text>
         )}
+        {permissionInfo && (
+          <Text style={[styles.hint, { color: colors.ok }]}>
+            ✓ {permissionInfo}
+          </Text>
+        )}
         <Pressable
           style={[styles.btnPrimary, requestingPerm && styles.btnDisabled]}
           disabled={requestingPerm}
           onPress={async () => {
             setRequestingPerm(true);
             setPermissionError(null);
+            setPermissionInfo(null);
             try {
               const r = await requestAllPermissions();
               setPermState(r);
-              if (r === "not_requested") {
-                setPermissionError(
-                  "El sistema no respondió tras 30s. Posible causa: falta el HealthConnectPermissionDelegate o el activity-alias en AndroidManifest. Reconstruye el APK con `expo prebuild --clean`."
+              if (r === "granted") {
+                setPermissionInfo("Permisos concedidos. Ya puedes sincronizar datos.");
+              } else if (r === "partial") {
+                setPermissionInfo("Permisos parciales. Algunos datos no estarán disponibles.");
+              } else if (r === "not_requested") {
+                // Esto ahora significa: abrimos los ajustes de HC para que el
+                // usuario conceda manualmente. NO es un error.
+                setPermissionInfo(
+                  "Se abrieron los ajustes de Health Connect. " +
+                  "Busca 'All-in-One Fitness' en la lista de apps, " +
+                  "concede los permisos, vuelve a esta pantalla y pulsa 'Recomprobar ahora'."
                 );
               } else if (r === "denied") {
                 setPermissionError(
-                  "Permisos denegados. Si HC no muestra el diálogo, puede que el activity-alias no esté registrado. Reconstruye el APK o abre los ajustes de Health Connect manualmente."
+                  "Permisos denegados. Vuelve a pulsar 'Conceder permisos' para abrir los ajustes de Health Connect."
                 );
               }
             } catch (err: any) {

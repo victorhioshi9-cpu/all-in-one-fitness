@@ -24,7 +24,7 @@
  *     (porque with-native-pose.js está desactivado en app.config.ts), el
  *     callback devuelve null y la app no crashea (graceful degradation).
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useFrameProcessor } from "react-native-vision-camera";
 import { useRunInJS } from "react-native-worklets-core";
 import type { PoseFrame } from "@/modules/biomechanics/landmarks";
@@ -42,6 +42,26 @@ export function useSimplePoseFrameProcessor(active: boolean): UseSimplePoseResul
   const [pose, setPose] = useState<PoseFrame | null>(null);
   const [fps, setFps] = useState(0);
   const lastTsRef = useRef<number>(0);
+
+  // --- Diagnóstico: log para saber si el plugin nativo está disponible ---
+  // Si el plugin NO está registrado, el frameProcessor devolverá null siempre
+  // y veremos 'Esperando cuerpo…' para siempre. Este log nos dice en runtime
+  // si el problema es que el plugin nativo no se cargó.
+  useEffect(() => {
+    if (!active) return;
+    console.log("[useSimplePose] hook activo. Verificando disponibilidad del plugin nativo 'poseLandmarker'...");
+    // Si tras 3s no hay pose detectada, logueamos warning.
+    const timeout = setTimeout(() => {
+      console.warn(
+        "[useSimplePose] Pasaron 3s sin pose detectada. Posibles causas:\n" +
+        "  1. El plugin nativo 'poseLandmarker' no está registrado (revisa MainApplication.kt).\n" +
+        "  2. La persona no está enfrente de la cámara.\n" +
+        "  3. El modelo pose_landmarker.task no está en assets/.\n" +
+        "  4. El frameProcessor se está ejecutando pero el plugin devuelve null."
+      );
+    }, 3000);
+    return () => clearTimeout(timeout);
+  }, [active]);
 
   // Callback que corre en hilo JS. Lo creamos una sola vez.
   // useRunInJS devuelve una función que se puede llamar desde el worklet

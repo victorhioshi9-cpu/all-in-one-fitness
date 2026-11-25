@@ -1,47 +1,34 @@
 /**
  * with-native-pose.js
  * ----------------------------------------------------------------------------
- * Expo config plugin (no-typescript) que instala el plugin nativo de
- * PoseLandmarker de MediaPipe en el proyecto Android generado por
- * `expo prebuild`.
+ * Expo config plugin que instala el plugin nativo de PoseLandmarker.
  *
- * Hace tres cosas en build-time (NO en runtime):
+ * v0.3.8 — Enfoque robusto para MainApplication.kt:
+ *   En lugar de intentar matchear patrones complejos como
+ *   `PackageList(this).packages.apply { ... }` (que varían entre versiones
+ *   de Expo SDK y New/Old Arch), usamos una estrategia simple:
  *
- *   1) Copia `android-native/pose/PoseLandmarkerPlugin.kt` y
- *      `PoseLandmarkerPluginPackage.kt` a
- *      `android/app/src/main/java/com/aiofitness/pose/`.
+ *   1) Buscar la expresión `PackageList(this).packages` (que SIEMPRE está
+ *      en getPackages() de Expo RN) y reemplazarla por
+ *      `PackageList(this).packages + PoseLandmarkerPluginPackage()`
+ *      Usar `+` es idiomático Kotlin para añadir un elemento a una List.
  *
- *   2) Modifica `MainApplication.kt`:
- *        - Añade el import del package.
- *        - Añade `add(PoseLandmarkerPluginPackage())` al getPackages() list.
- *        - Añade `PoseLandmarkerPluginPackage.registerIfNeeded(this)` al onCreate().
+ *   2) Buscar `super.onCreate()` y añadir justo después:
+ *      `PoseLandmarkerPluginPackage.registerIfNeeded(this)`
  *
- *   3) Descarga el modelo `pose_landmarker.task` desde Google Cloud Storage a
- *      `android/app/src/main/assets/pose_landmarker.task` (si no existe ya).
+ *   3) Añadir el import al final del bloque de imports.
  *
- * Declarado en `app.config.ts` -> `plugins: ["./plugins/with-native-pose"]`.
- *
- * Idempotente: se puede ejecutar varias veces sin duplicar líneas.
+ *   Esto funciona en TODOS los MainApplication.kt generados por Expo SDK 51
+ *   sin importar si usan `apply {}`, `toMutableList()`, o return directo.
  */
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
-const { withDangerousMod, withMainApplication, AndroidConfig } = require("expo/config-plugins");
+const { withDangerousMod, withMainApplication } = require("expo/config-plugins");
 
 const PACKAGE_NAME = "com.aiofitness.coach";
 const POSE_PACKAGE_DIR = "com/aiofitness/pose";
 
-// Modelo de MediaPipe PoseLandmarker. Múltiples URLs para redundancia:
-// El path correcto en GCS incluye la variante del modelo (_full, _lite, _heavy).
-// La URL antigua sin sufijo daba 404 (Google la movió).
-// Orden de preferencia:
-//   1) pose_landmarker_full (mejor precisión, ~9MB) - Google Cloud Storage
-//   2) pose_landmarker_full - mirror HuggingFace (en caso de que GCS tenga issues)
-//   3) pose_landmarker_lite (más rápido, ~6MB) - GCS
-//   4) pose_landmarker_lite - HuggingFace
-//   5) pose_landmarker_heavy (mejor precisión, ~26MB) - GCS
-// Si todos fallan, el plugin Kotlin lo detecta en runtime (getOrCreateLandmarker
-// devuelve null) y la app sigue abriendo la cámara pero sin esqueleto. No crashea.
 const POSE_MODEL_URLS = [
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
   "https://huggingface.co/litert-community/MediaPipe-PoseLandmarker-Full/resolve/main/pose_landmarker_full.task",
@@ -50,202 +37,127 @@ const POSE_MODEL_URLS = [
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task"
 ];
 const POSE_MODEL_FILENAME = "pose_landmarker.task";
-// Tamaño mínimo aceptable: el modelo lite pesa ~6MB, full ~9MB, heavy ~26MB.
-// Si la descarga devuelve menos de 5MB, asumimos corrupta y probamos siguiente URL.
 const MIN_MODEL_SIZE = 5_000_000;
 
+const IMPORT_LINE = "import com.aiofitness.pose.PoseLandmarkerPluginPackage";
+
 module.exports = function withNativePose(config) {
-  // 1) Copy Kotlin sources + download model with withDangerousMod
+  // 1) Copiar .kt + descargar modelo
   config = withDangerousMod(config, [
     "android",
     async (cfg) => {
       const projectRoot = cfg.modRequest.projectRoot;
       const androidRoot = cfg.modRequest.platformProjectRoot;
 
-      // --- 1a) Copiar archivos .kt al directorio de Android ---
       const sourceDir = path.join(projectRoot, "android-native", "pose");
-      const destDir = path.join(
-        androidRoot,
-        "app",
-        "src",
-        "main",
-        "java",
-        POSE_PACKAGE_DIR
-      );
+      const destDir = path.join(androidRoot, "app", "src", "main", "java", POSE_PACKAGE_DIR);
 
       if (!fs.existsSync(sourceDir)) {
-        throw new Error(
-          `with-native-pose: no existe ${sourceDir}. ` +
-          `Asegúrate de que los archivos Kotlin están en android-native/pose/`
-        );
+        throw new Error(`with-native-pose: no existe ${sourceDir}`);
       }
 
       fs.mkdirSync(destDir, { recursive: true });
 
-      const filesToCopy = [
-        "PoseLandmarkerPlugin.kt",
-        "PoseLandmarkerPluginPackage.kt"
-      ];
-      for (const f of filesToCopy) {
+      for (const f of ["PoseLandmarkerPlugin.kt", "PoseLandmarkerPluginPackage.kt"]) {
         const src = path.join(sourceDir, f);
         const dst = path.join(destDir, f);
-        if (!fs.existsSync(src)) {
-          throw new Error(`with-native-pose: falta ${src}`);
-        }
+        if (!fs.existsSync(src)) throw new Error(`with-native-pose: falta ${src}`);
         fs.copyFileSync(src, dst);
         console.log(`[with-native-pose] copiado: ${dst}`);
       }
 
-      // --- 1b) Descargar el modelo pose_landmarker.task si no existe ---
-      const assetsDir = path.join(
-        androidRoot,
-        "app",
-        "src",
-        "main",
-        "assets"
-      );
+      const assetsDir = path.join(androidRoot, "app", "src", "main", "assets");
       fs.mkdirSync(assetsDir, { recursive: true });
       const modelDestPath = path.join(assetsDir, POSE_MODEL_FILENAME);
 
-      if (fs.existsSync(modelDestPath)) {
-        const stat = fs.statSync(modelDestPath);
-        if (stat.size > MIN_MODEL_SIZE) {
-          console.log(
-            `[with-native-pose] modelo ya existe (${stat.size} bytes), omitiendo descarga`
-          );
-        } else {
-          console.log(`[with-native-pose] modelo existe pero está corrupto (${stat.size} bytes < ${MIN_MODEL_SIZE}), re-descargando...`);
-          fs.unlinkSync(modelDestPath);
-          await downloadModelWithFallbacks(modelDestPath);
-        }
+      if (fs.existsSync(modelDestPath) && fs.statSync(modelDestPath).size >= MIN_MODEL_SIZE) {
+        console.log(`[with-native-pose] modelo ya existe (${fs.statSync(modelDestPath).size} bytes)`);
       } else {
         console.log("[with-native-pose] descargando modelo pose_landmarker.task (~9MB)...");
         await downloadModelWithFallbacks(modelDestPath);
-        const stat = fs.statSync(modelDestPath);
-        console.log(`[with-native-pose] modelo descargado: ${stat.size} bytes`);
+        console.log(`[with-native-pose] modelo descargado: ${fs.statSync(modelDestPath).size} bytes`);
       }
 
       return cfg;
     }
   ]);
 
-  // 2) Modificar MainApplication.kt para registrar el package y llamar registerIfNeeded
+  // 2) Modificar MainApplication.kt — enfoque robusto
   config = withMainApplication(config, (cfg) => {
-    const mainApplication = cfg.modResults.contents;
-
-    // Las inserciones son idempotentes: comprobamos si ya están presentes.
-    const importMarker = "package " + PACKAGE_NAME;
-    const importLine = "import com.aiofitness.pose.PoseLandmarkerPluginPackage";
+    let contents = cfg.modResults.contents;
+    let changed = false;
 
     // 2a) Añadir import si no existe
-    if (!mainApplication.includes("PoseLandmarkerPluginPackage")) {
-      // Insertar después de los imports existentes (al final del bloque de imports).
-      // Buscamos el último `import` statement en el archivo.
-      cfg.modResults.contents = insertAfterLastImport(
-        mainApplication,
-        importLine
-      );
-      console.log("[with-native-pose] import añadido a MainApplication.kt");
+    if (!contents.includes("PoseLandmarkerPluginPackage")) {
+      const lines = contents.split("\n");
+      let lastImportIdx = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].match(/^\s*import\s+/)) lastImportIdx = i;
+      }
+      if (lastImportIdx >= 0) {
+        lines.splice(lastImportIdx + 1, 0, IMPORT_LINE);
+        contents = lines.join("\n");
+        console.log("[with-native-pose] import añadido tras línea " + (lastImportIdx + 1));
+      } else {
+        const pkgIdx = lines.findIndex((l) => l.match(/^\s*package\s+/));
+        if (pkgIdx >= 0) {
+          lines.splice(pkgIdx + 1, 0, "", IMPORT_LINE);
+          contents = lines.join("\n");
+          console.log("[with-native-pose] import añadido tras package");
+        }
+      }
+      changed = true;
     }
 
-    // 2b) Añadir add(PoseLandmarkerPluginPackage()) al getPackages()
-    // En Expo SDK 51 new arch, getPackages() suele ser:
-    //   override fun getPackages(): List<ReactPackage> =
-    //     PackageList(this).packages.apply {
-    //       // add(...) si tienes módulos nativos extras
-    //     }
-    if (!cfg.modResults.contents.includes("add(PoseLandmarkerPluginPackage())")) {
-      cfg.modResults.contents = cfg.modResults.contents.replace(
-        /(PackageList\(this\)\.packages\.apply\s*\{)/,
-        `$1\n      add(PoseLandmarkerPluginPackage())`
-      );
-      // Si no encontró `apply {`, intentar con la variante `apply { ... }` o lista explícita
-      if (!cfg.modResults.contents.includes("add(PoseLandmarkerPluginPackage())")) {
-        // Patrón alternativo: getPackages devuelve ArrayList con addAll
-        cfg.modResults.contents = cfg.modResults.contents.replace(
-          /(val packages = PackageList\(this\)\.packages)/,
-          `$1\n      packages.add(PoseLandmarkerPluginPackage())`
-        );
-      }
-      if (cfg.modResults.contents.includes("add(PoseLandmarkerPluginPackage())")) {
-        console.log("[with-native-pose] add(PoseLandmarkerPluginPackage()) registrado");
+    // 2b) Añadir `+ PoseLandmarkerPluginPackage()` justo después de
+    //     `PackageList(this).packages` si no está ya añadido.
+    if (!contents.includes("PoseLandmarkerPluginPackage()")) {
+      const pattern = /(PackageList\(this\)\.packages)(?!\s*\+\s*PoseLandmarkerPluginPackage)/;
+      if (pattern.test(contents)) {
+        contents = contents.replace(pattern, "$1 + PoseLandmarkerPluginPackage()");
+        console.log("[with-native-pose] '+ PoseLandmarkerPluginPackage()' añadido tras PackageList(this).packages");
+        changed = true;
       } else {
-        console.warn(
-          "[with-native-pose] WARNING: no se pudo inyectar add(PoseLandmarkerPluginPackage()) en getPackages(). " +
-          "Revisa MainApplication.kt manualmente."
-        );
-      }
-    }
-
-    // 2c) Añadir PoseLandmarkerPluginPackage.registerIfNeeded(this) al onCreate()
-    if (!cfg.modResults.contents.includes("PoseLandmarkerPluginPackage.registerIfNeeded")) {
-      // En Expo SDK 51 new arch, onCreate() de MainApplication es:
-      //   override fun onCreate() {
-      //     super.onCreate()
-      //     SoLoader.init(...)
-      //     ...
-      //   }
-      // Inyectamos justo después de `super.onCreate()`.
-      const onCreateReplaced = cfg.modResults.contents.replace(
-        /(override fun onCreate\(\)\s*\{[\s\S]*?super\.onCreate\(\))/,
-        `$1\n    PoseLandmarkerPluginPackage.registerIfNeeded(this)`
-      );
-      if (onCreateReplaced !== cfg.modResults.contents) {
-        cfg.modResults.contents = onCreateReplaced;
-        console.log("[with-native-pose] registerIfNeeded(this) inyectado en onCreate()");
-      } else {
-        // Plan B: insertar al final del onCreate() antes de la llave de cierre.
-        // Buscamos el primer `super.onCreate()` y metemos nuestra línea después.
-        cfg.modResults.contents = cfg.modResults.contents.replace(
-          /(super\.onCreate\(\))/,
-          `$1\n    PoseLandmarkerPluginPackage.registerIfNeeded(this)`
-        );
-        if (cfg.modResults.contents.includes("PoseLandmarkerPluginPackage.registerIfNeeded")) {
-          console.log("[with-native-pose] registerIfNeeded(this) inyectado (plan B)");
+        const pattern2 = /(PackageList\(this\)\.getPackages\(\))(?!\s*\+\s*PoseLandmarkerPluginPackage)/;
+        if (pattern2.test(contents)) {
+          contents = contents.replace(pattern2, "$1 + PoseLandmarkerPluginPackage()");
+          console.log("[with-native-pose] '+ PoseLandmarkerPluginPackage()' añadido tras PackageList(this).getPackages()");
+          changed = true;
         } else {
           console.warn(
-            "[with-native-pose] WARNING: no se pudo inyectar registerIfNeeded en onCreate()."
+            "[with-native-pose] WARNING: no se encontró 'PackageList(this).packages' en MainApplication.kt. " +
+            "El plugin nativo NO se registrará. Revisa MainApplication.kt manualmente."
           );
         }
       }
     }
 
+    // 2c) Añadir `PoseLandmarkerPluginPackage.registerIfNeeded(this)` al onCreate()
+    if (!contents.includes("PoseLandmarkerPluginPackage.registerIfNeeded")) {
+      const onCreatePattern = /(super\.onCreate\([^)]*\))/;
+      if (onCreatePattern.test(contents)) {
+        contents = contents.replace(
+          onCreatePattern,
+          "$1\n    PoseLandmarkerPluginPackage.registerIfNeeded(this)"
+        );
+        console.log("[with-native-pose] registerIfNeeded(this) añadido tras super.onCreate()");
+        changed = true;
+      } else {
+        console.warn(
+          "[with-native-pose] WARNING: no se encontró 'super.onCreate()' en MainApplication.kt."
+        );
+      }
+    }
+
+    if (changed) {
+      cfg.modResults.contents = contents;
+    }
     return cfg;
   });
 
   return config;
 };
 
-/**
- * Inserta `line` justo después del último `import ...` del archivo Kotlin.
- * Si no encuentra imports, lo inserta después de `package ...`.
- */
-function insertAfterLastImport(source, line) {
-  const lines = source.split("\n");
-  let lastImportIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].match(/^\s*import\s+/)) {
-      lastImportIdx = i;
-    }
-  }
-  if (lastImportIdx === -1) {
-    // Buscar la línea `package ...` e insertar después.
-    const pkgIdx = lines.findIndex((l) => l.match(/^\s*package\s+/));
-    if (pkgIdx === -1) {
-      // No encontramos package; al inicio.
-      return line + "\n" + source;
-    }
-    lines.splice(pkgIdx + 1, 0, "", line);
-  } else {
-    lines.splice(lastImportIdx + 1, 0, line);
-  }
-  return lines.join("\n");
-}
-
-/**
- * Descarga el modelo probando varias URLs en orden. Devuelve true si alguna
- * tuvo éxito. Lanza Error solo si TODAS fallan.
- */
 async function downloadModelWithFallbacks(destPath) {
   let lastErr = null;
   for (let i = 0; i < POSE_MODEL_URLS.length; i++) {
@@ -268,18 +180,11 @@ async function downloadModelWithFallbacks(destPath) {
       }
     }
   }
-  // Todas fallaron. Lanzamos con mensaje claro para que el build falle y se vea
-  // en el log del workflow, PERO el plugin Kotlin maneja el modelo ausente
-  // graceful en runtime (la cámara abre sin esqueleto). Aún así, preferimos
-  // fallar el build para forzar revisión.
   throw new Error(
-    `[with-native-pose] TODAS las URLs de descarga del modelo fallaron. ` +
-    `Último error: ${lastErr?.message ?? "desconocido"}. ` +
-    `URLs probadas: ${POSE_MODEL_URLS.join(", ")}`
+    `[with-native-pose] TODAS las URLs fallaron. Último error: ${lastErr?.message ?? "desconocido"}`
   );
 }
 
-/** Descarga un fichero binario desde una URL HTTPS al filesystem. */
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(destPath);
@@ -287,7 +192,6 @@ function downloadFile(url, destPath) {
       https
         .get(currentUrl, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            // Redirect
             if (redirectsLeft === 0) {
               reject(new Error(`Demasiados redirects descargando ${url}`));
               return;
