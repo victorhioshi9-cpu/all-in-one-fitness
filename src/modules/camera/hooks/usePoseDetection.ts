@@ -4,12 +4,8 @@
  * Hook que usa el plugin nativo 'detectPose' del paquete
  * @scottjgilroy/react-native-vision-camera-v4-pose-detection (Google ML Kit).
  *
- * v0.5.0 — Aplana landmarks en el worklet antes de pasar a JS.
- *   Los objetos anidados NO sobreviven el paso por useRunInJS (thread boundary).
- *   Antes: handlePose(result) donde result = { leftShoulderPosition: {x, y}, ... }
- *   Ahora: extraemos coordenadas en el worklet y pasamos un objeto PLANO:
- *     { leftShoulderPosition_x: 123, leftShoulderPosition_y: 456, ... }
- *   Esto SÍ sobrevive el paso por useRunInJS.
+ * APLANA landmarks en el worklet antes de pasar a JS.
+ * Los objetos anidados NO sobreviven el paso por useRunInJS (thread boundary).
  */
 import { useState, useRef, useEffect } from "react";
 import { useFrameProcessor } from "react-native-vision-camera";
@@ -24,8 +20,8 @@ try {
 }
 
 export interface FlatPose {
-  [key: string]: number; // Claves: leftShoulderPosition_x, leftShoulderPosition_y, etc.
-  _hasData: number; // 1 si hay landmarks, 0 si no
+  [key: string]: number;
+  _hasData: number;
   _landmarkCount: number;
 }
 
@@ -36,7 +32,6 @@ export interface UsePoseDetectionResult {
   isAvailable: boolean;
 }
 
-// Lista de nombres de landmarks que devuelve el plugin nativo (con sufijo Position)
 const LANDMARK_KEYS = [
   "leftShoulderPosition", "rightShoulderPosition",
   "leftElbowPosition", "rightElbowPosition",
@@ -55,12 +50,10 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
   const frameCountRef = useRef<number>(0);
   const isAvailable = detectPosePlugin !== null;
 
-  // Callback que recibe el pose aplastado y lo guarda en state.
   const handlePose = useRunInJS(((p: FlatPose | null) => {
     setPose(p);
   }) as any, []) as (p: FlatPose | null) => void;
 
-  // Callback para FPS.
   const handleFps = useRunInJS(((fpsVal: number) => {
     setFps(fpsVal);
   }) as any, []) as (fpsVal: number) => void;
@@ -73,11 +66,7 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
     }
     console.log("[usePoseDetection] activo, plugin disponible.");
     const t = setTimeout(() => {
-      if (frameCountRef.current === 0) {
-        console.warn("[usePoseDetection] 3s sin frames procesados.");
-      } else {
-        console.log("[usePoseDetection] frames procesados:", frameCountRef.current);
-      }
+      console.log("[usePoseDetection] frames procesados:", frameCountRef.current);
     }, 3000);
     return () => clearTimeout(t);
   }, [active, isAvailable]);
@@ -89,7 +78,6 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
 
       if (!active || !detectPosePlugin) return;
 
-      // Contar frames
       frameCountRef.current++;
 
       let result: any = null;
@@ -107,9 +95,7 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
         return;
       }
 
-      // APLANAR el resultado: extraer coordenadas de cada landmark
-      // y pasarlas como números sueltos (no objetos anidados).
-      // Esto es CRÍTICO porque useRunInJS no serializa bien objetos anidados.
+      // APLANAR: extraer coordenadas como números sueltos.
       const flat: any = { _hasData: 0, _landmarkCount: 0 };
       let count = 0;
 
@@ -119,7 +105,7 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
         if (lm && typeof lm === "object") {
           const x = lm.x;
           const y = lm.y;
-          if (typeof x === "number" && typeof y === "number" && (x !== 0 || y !== 0)) {
+          if (typeof x === "number" && typeof y === "number") {
             flat[key + "_x"] = x;
             flat[key + "_y"] = y;
             count++;
@@ -130,23 +116,17 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
       flat._landmarkCount = count;
       flat._hasData = count > 0 ? 1 : 0;
 
-      // FPS: usar Date.now() en vez de frame.timestamp (que puede ser 0).
+      // FPS
       const now = Date.now();
       if (lastTsRef.current > 0) {
         const delta = now - lastTsRef.current;
         if (delta > 0) {
-          const f = Math.round(1000 / delta);
-          handleFps(f);
+          handleFps(Math.round(1000 / delta));
         }
       }
       lastTsRef.current = now;
 
-      // Pasar el objeto plano a JS.
-      if (count > 0) {
-        handlePose(flat);
-      } else {
-        handlePose(null);
-      }
+      handlePose(count > 0 ? flat : null);
     }, [active, handlePose, handleFps]);
   } catch (err: any) {
     console.warn("[usePoseDetection] useFrameProcessor falló:", err?.message ?? err);
