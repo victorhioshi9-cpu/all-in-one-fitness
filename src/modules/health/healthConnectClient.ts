@@ -313,20 +313,21 @@ export async function readHcRecords(
 ): Promise<any[]> {
   try {
     const { readRecords } = require("react-native-health-connect");
-    console.log(`[healthConnect] readHcRecords(${recordType}) range: ${new Date(startTimeEpochMs).toISOString()} → ${new Date(endTimeEpochMs).toISOString()}`);
+    // SDK v3.2 espera startTime/endTime como String ISO 8601, NO como número.
+    // Error: "Value for startTime cannot be cast from Double to String"
+    const startISO = new Date(startTimeEpochMs).toISOString();
+    const endISO = new Date(endTimeEpochMs).toISOString();
+    console.log(`[healthConnect] readHcRecords(${recordType}) range: ${startISO} → ${endISO}`);
     const result = await readRecords(recordType, {
       timeRangeFilter: {
         operator: "between",
-        startTime: startTimeEpochMs,
-        endTime: endTimeEpochMs
+        startTime: startISO,
+        endTime: endISO
       },
       ...(extraOps ?? {})
     });
     const records = Array.isArray(result) ? result : (result?.records ?? []);
     console.log(`[healthConnect] readHcRecords(${recordType}) → ${records.length} registros`);
-    if (records.length > 0) {
-      console.log(`[healthConnect] primer registro:`, JSON.stringify(records[0]).slice(0, 200));
-    }
     return records;
   } catch (err) {
     console.error(`[healthConnect] readHcRecords(${recordType}) ERROR:`, err);

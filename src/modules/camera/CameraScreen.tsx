@@ -74,25 +74,25 @@ export const CameraScreen: React.FC = () => {
     return () => subscription.remove();
   }, []);
 
+  // --- Toggle de pose detection ---
+  // Por defecto DESACTIVADO. El frame processor con runOnJS puede causar
+  // crashes nativos en algunos dispositivos. El usuario lo activa manualmente
+  // con el botón "Esqueleto ON/OFF" en el HUD.
+  // Si se activa y la app crashea, sabremos que el problema es el plugin nativo.
   // --- Pose detection con Google ML Kit ---
-  // Usa el plugin nativo del paquete @scottjgilroy/react-native-vision-camera-v4-pose-detection.
-  // El hook se llama SIEMPRE (reglas de hooks). El parámetro 'active' controla.
+  // Hook se llama SIEMPRE (reglas de hooks). El parámetro 'active' controla.
   const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking");
 
-  // --- Contador automático de reps por altura de cadera ---
+  // --- Contador automático de reps (heurística por altura de cadera) ---
   const lastHipYRef = useRef<number | null>(null);
   const repPhaseRef = useRef<"down" | "up">("up");
   const repPeakYRef = useRef<number>(1.0);
 
   useEffect(() => {
     if (mode !== "tracking" || !pose || !pose._hasData) return;
-    // Pose plano: leftHipPosition_x, leftHipPosition_y, etc.
-    const lhX = pose.leftHipPosition_x;
     const lhY = pose.leftHipPosition_y;
-    const rhX = pose.rightHipPosition_x;
     const rhY = pose.rightHipPosition_y;
     if (typeof lhY !== "number" || typeof rhY !== "number") return;
-    // Normalizar Y respecto al alto del frame (1920 típico).
     const hipY = ((lhY + rhY) / 2) / 1920;
     if (typeof hipY !== "number" || isNaN(hipY)) return;
 
@@ -104,13 +104,13 @@ export const CameraScreen: React.FC = () => {
       return;
     }
 
-    if (hipY > last + 0.01) {
+    if (hipY > last + 0.005) {
       if (hipY > repPeakYRef.current) repPeakYRef.current = hipY;
       repPhaseRef.current = "down";
-    } else if (hipY < last - 0.01) {
+    } else if (hipY < last - 0.005) {
       if (repPhaseRef.current === "down") {
         const amplitude = repPeakYRef.current - hipY;
-        if (amplitude > 0.05) {
+        if (amplitude > 0.04) {
           setCount((c) => c + 1);
           repPeakYRef.current = hipY;
           repPhaseRef.current = "up";
@@ -301,7 +301,7 @@ export const CameraScreen: React.FC = () => {
     );
   }
 
-  // --- Render: tracking (preview de cámara + pose detection) ---
+  // --- Render: tracking (preview de cámara + pose detection ML Kit) ---
   return (
     <View key={reloadKey} style={styles.trackingContainer}>
       <Camera
@@ -315,17 +315,19 @@ export const CameraScreen: React.FC = () => {
         frameProcessor={frameProcessor}
       />
 
-      {/* Overlay de puntos del esqueleto (RN puro, sin Skia) */}
-      {pose && <SkeletonPoints pose={pose} width={width} height={height} />}
+      {/* Overlay de puntos del esqueleto */}
+      {pose && pose._hasData ? (
+        <SkeletonPoints pose={pose} width={width} height={height} />
+      ) : null}
 
       {/* Estado de pose detection */}
       <View style={styles.poseStatus}>
         {pose && pose._hasData ? (
-          <Text style={styles.poseStatusOk}>✓ Cuerpo detectado · {fps} fps · {pose._landmarkCount || 0} puntos · Reps auto</Text>
+          <Text style={styles.poseStatusOk}>✓ Cuerpo detectado · {fps} fps · {pose._landmarkCount} puntos</Text>
         ) : poseAvailable ? (
           <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
         ) : (
-          <Text style={styles.poseStatusInfo}>ML Kit no disponible · contador manual</Text>
+          <Text style={styles.poseStatusInfo}>ML Kit no disponible</Text>
         )}
       </View>
 
@@ -377,128 +379,6 @@ export const CameraScreen: React.FC = () => {
           <Text style={styles.hudStatUnit}>reps</Text>
         </View>
       </View>
-    </View>
-  );
-};
-
-// ============================================================================
-// SkeletonPoints — overlay simple que dibuja los landmarks de ML Kit
-// ============================================================================
-const SKELETON_CONNECTIONS: [string, string][] = [
-  ["leftShoulderPosition", "rightShoulderPosition"],
-  ["leftShoulderPosition", "leftElbowPosition"], ["leftElbowPosition", "leftWristPosition"],
-  ["rightShoulderPosition", "rightElbowPosition"], ["rightElbowPosition", "rightWristPosition"],
-  ["leftShoulderPosition", "leftHipPosition"], ["rightShoulderPosition", "rightHipPosition"],
-  ["leftHipPosition", "rightHipPosition"],
-  ["leftHipPosition", "leftKneePosition"], ["leftKneePosition", "leftAnklePosition"],
-  ["rightHipPosition", "rightKneePosition"], ["rightKneePosition", "rightAnklePosition"],
-  ["nosePosition", "leftEyePosition"], ["nosePosition", "rightEyePosition"],
-  ["leftEyePosition", "leftEarPosition"], ["rightEyePosition", "rightEarPosition"]
-];
-
-const SkeletonPoints: React.FC<{
-  pose: any;
-  width: number;
-  height: number;
-}> = ({ pose, width, height }) => {
-  // El pose ahora es PLANO: leftShoulderPosition_x, leftShoulderPosition_y, etc.
-  // No hay objetos anidados.
-  if (!pose || !pose._hasData) return null;
-
-  // Escala: ML Kit devuelve píxeles del frame. Típico: 1080x1920 o 720x1280.
-  // Usamos 1080 como ancho de referencia.
-  const FRAME_W = 1080;
-  const FRAME_H = 1920;
-  const scaleX = width / FRAME_W;
-  const scaleY = height / FRAME_H;
-
-  const points: React.ReactNode[] = [];
-  const lines: React.ReactNode[] = [];
-
-  // Helper: obtener {x, y} de un landmark desde el pose plano.
-  const getLM = (name: string): { x: number; y: number } | null => {
-    const x = pose[name + "_x"];
-    const y = pose[name + "_y"];
-    if (typeof x !== "number" || typeof y !== "number") return null;
-    if (x === 0 && y === 0) return null; // landmark no detectado
-    return { x, y };
-  };
-
-  const landmarkNames = [
-    "leftShoulderPosition", "rightShoulderPosition",
-    "leftElbowPosition", "rightElbowPosition",
-    "leftWristPosition", "rightWristPosition",
-    "leftHipPosition", "rightHipPosition",
-    "leftKneePosition", "rightKneePosition",
-    "leftAnklePosition", "rightAnklePosition",
-    "nosePosition", "leftEyePosition", "rightEyePosition",
-    "leftEarPosition", "rightEarPosition"
-  ];
-
-  // Dibujar puntos
-  for (const name of landmarkNames) {
-    const lm = getLM(name);
-    if (!lm) continue;
-    const left = lm.x * scaleX - 6;
-    const top = lm.y * scaleY - 6;
-    points.push(
-      <View
-        key={`pt-${name}`}
-        style={{
-          position: "absolute",
-          left,
-          top,
-          width: 12,
-          height: 12,
-          borderRadius: 6,
-          backgroundColor: "#fbbf24",
-          borderWidth: 2,
-          borderColor: "#fff"
-        }}
-      />
-    );
-  }
-
-  // Dibujar líneas
-  for (let i = 0; i < SKELETON_CONNECTIONS.length; i++) {
-    const [aName, bName] = SKELETON_CONNECTIONS[i];
-    const a = getLM(aName);
-    const b = getLM(bName);
-    if (!a || !b) continue;
-
-    const x1 = a.x * scaleX;
-    const y1 = a.y * scaleY;
-    const x2 = b.x * scaleX;
-    const y2 = b.y * scaleY;
-
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const length = Math.sqrt(dx * dx + dy * dy);
-    if (length < 2) continue;
-
-    const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
-
-    lines.push(
-      <View
-        key={`ln-${i}`}
-        style={{
-          position: "absolute",
-          left: x1,
-          top: y1 - 2,
-          width: length,
-          height: 4,
-          backgroundColor: "#ef4444",
-          borderRadius: 2,
-          transform: [{ rotate: `${angleDeg}deg` }]
-        }}
-      />
-    );
-  }
-
-  return (
-    <View style={{ position: "absolute", top: 0, left: 0, width, height }} pointerEvents="none">
-      {lines}
-      {points}
     </View>
   );
 };
