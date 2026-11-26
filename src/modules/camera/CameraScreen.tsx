@@ -85,14 +85,15 @@ export const CameraScreen: React.FC = () => {
   const repPeakYRef = useRef<number>(1.0);
 
   useEffect(() => {
-    if (mode !== "tracking" || !pose) return;
-    // ML Kit devuelve coordenadas en píxeles. Necesitamos normalizar.
-    // Los landmarks se llaman leftHipPosition, rightHipPosition (con sufijo).
-    const lh = pose.leftHipPosition;
-    const rh = pose.rightHipPosition;
-    if (!lh || !rh) return;
+    if (mode !== "tracking" || !pose || !pose._hasData) return;
+    // Pose plano: leftHipPosition_x, leftHipPosition_y, etc.
+    const lhX = pose.leftHipPosition_x;
+    const lhY = pose.leftHipPosition_y;
+    const rhX = pose.rightHipPosition_x;
+    const rhY = pose.rightHipPosition_y;
+    if (typeof lhY !== "number" || typeof rhY !== "number") return;
     // Normalizar Y respecto al alto del frame (1920 típico).
-    const hipY = ((lh.y + rh.y) / 2) / 1920;
+    const hipY = ((lhY + rhY) / 2) / 1920;
     if (typeof hipY !== "number" || isNaN(hipY)) return;
 
     const last = lastHipYRef.current;
@@ -319,8 +320,8 @@ export const CameraScreen: React.FC = () => {
 
       {/* Estado de pose detection */}
       <View style={styles.poseStatus}>
-        {pose ? (
-          <Text style={styles.poseStatusOk}>✓ Cuerpo detectado · {fps} fps · Reps auto</Text>
+        {pose && pose._hasData ? (
+          <Text style={styles.poseStatusOk}>✓ Cuerpo detectado · {fps} fps · {pose._landmarkCount || 0} puntos · Reps auto</Text>
         ) : poseAvailable ? (
           <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
         ) : (
@@ -400,21 +401,29 @@ const SkeletonPoints: React.FC<{
   width: number;
   height: number;
 }> = ({ pose, width, height }) => {
-  // ML Kit devuelve coordenadas en píxeles del frame original.
-  // Necesitamos escalarlas al tamaño de la pantalla.
-  // El frame de la cámara suele ser ~720x1280 (portrait) o similar.
-  // Usamos las dimensiones del frame para escalar correctamente.
-  // Como no sabemos el tamaño exacto del frame, usamos un factor
-  // basado en el ancho del device.
-  const FRAME_WIDTH = 1080; // típico de cámara trasera
-  const FRAME_HEIGHT = 1920;
-  const scaleX = width / FRAME_WIDTH;
-  const scaleY = height / FRAME_HEIGHT;
+  // El pose ahora es PLANO: leftShoulderPosition_x, leftShoulderPosition_y, etc.
+  // No hay objetos anidados.
+  if (!pose || !pose._hasData) return null;
+
+  // Escala: ML Kit devuelve píxeles del frame. Típico: 1080x1920 o 720x1280.
+  // Usamos 1080 como ancho de referencia.
+  const FRAME_W = 1080;
+  const FRAME_H = 1920;
+  const scaleX = width / FRAME_W;
+  const scaleY = height / FRAME_H;
 
   const points: React.ReactNode[] = [];
   const lines: React.ReactNode[] = [];
 
-  // Nombres EXACTOS que devuelve el plugin nativo (con sufijo "Position")
+  // Helper: obtener {x, y} de un landmark desde el pose plano.
+  const getLM = (name: string): { x: number; y: number } | null => {
+    const x = pose[name + "_x"];
+    const y = pose[name + "_y"];
+    if (typeof x !== "number" || typeof y !== "number") return null;
+    if (x === 0 && y === 0) return null; // landmark no detectado
+    return { x, y };
+  };
+
   const landmarkNames = [
     "leftShoulderPosition", "rightShoulderPosition",
     "leftElbowPosition", "rightElbowPosition",
@@ -426,11 +435,12 @@ const SkeletonPoints: React.FC<{
     "leftEarPosition", "rightEarPosition"
   ];
 
+  // Dibujar puntos
   for (const name of landmarkNames) {
-    const lm = pose[name];
-    if (!lm || typeof lm.x !== "number" || typeof lm.y !== "number") continue;
-    const left = lm.x * scaleX - 5;
-    const top = lm.y * scaleY - 5;
+    const lm = getLM(name);
+    if (!lm) continue;
+    const left = lm.x * scaleX - 6;
+    const top = lm.y * scaleY - 6;
     points.push(
       <View
         key={`pt-${name}`}
@@ -438,11 +448,11 @@ const SkeletonPoints: React.FC<{
           position: "absolute",
           left,
           top,
-          width: 10,
-          height: 10,
-          borderRadius: 5,
+          width: 12,
+          height: 12,
+          borderRadius: 6,
           backgroundColor: "#fbbf24",
-          borderWidth: 1,
+          borderWidth: 2,
           borderColor: "#fff"
         }}
       />
@@ -452,10 +462,9 @@ const SkeletonPoints: React.FC<{
   // Dibujar líneas
   for (let i = 0; i < SKELETON_CONNECTIONS.length; i++) {
     const [aName, bName] = SKELETON_CONNECTIONS[i];
-    const a = pose[aName];
-    const b = pose[bName];
+    const a = getLM(aName);
+    const b = getLM(bName);
     if (!a || !b) continue;
-    if (typeof a.x !== "number" || typeof b.x !== "number") continue;
 
     const x1 = a.x * scaleX;
     const y1 = a.y * scaleY;
@@ -475,10 +484,11 @@ const SkeletonPoints: React.FC<{
         style={{
           position: "absolute",
           left: x1,
-          top: y1 - 1.5,
+          top: y1 - 2,
           width: length,
-          height: 3,
+          height: 4,
           backgroundColor: "#ef4444",
+          borderRadius: 2,
           transform: [{ rotate: `${angleDeg}deg` }]
         }}
       />

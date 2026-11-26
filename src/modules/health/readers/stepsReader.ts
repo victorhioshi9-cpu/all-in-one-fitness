@@ -48,9 +48,14 @@ export async function readStepsRange(startDayIso: string, endDayIso: string): Pr
   return out;
 }
 
-// --- Helper: rango de un día en ms epoch (UTC) -----------------------------
+// --- Helper: rango de un día en ms epoch (LOCAL timezone) -------------------
+// IMPORTANTE: Usar zona horaria local, NO UTC. Si el usuario está en UTC-5
+// y son las 10pm, en UTC ya es el día siguiente. Usar UTC haría que los datos
+// de la tarde no aparezcan.
 export function dayRange(dayIso: string): { startMs: number; endMs: number } {
-  const start = new Date(`${dayIso}T00:00:00Z`).getTime();
-  const end = new Date(`${dayIso}T23:59:59.999Z`).getTime();
+  // Parsear la fecha como local (no UTC).
+  const [year, month, day] = dayIso.split("-").map(Number);
+  const start = new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
+  const end = new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
   return { startMs: start, endMs: end };
 }

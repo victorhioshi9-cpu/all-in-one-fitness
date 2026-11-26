@@ -311,16 +311,27 @@ export async function readHcRecords(
   endTimeEpochMs: number,
   extraOps?: Record<string, any>
 ): Promise<any[]> {
-  const { readRecords } = require("react-native-health-connect");
-  const result = await readRecords(recordType, {
-    timeRangeFilter: {
-      operator: "between",
-      startTime: startTimeEpochMs,
-      endTime: endTimeEpochMs
-    },
-    ...(extraOps ?? {})
-  });
-  return Array.isArray(result) ? result : (result?.records ?? []);
+  try {
+    const { readRecords } = require("react-native-health-connect");
+    console.log(`[healthConnect] readHcRecords(${recordType}) range: ${new Date(startTimeEpochMs).toISOString()} → ${new Date(endTimeEpochMs).toISOString()}`);
+    const result = await readRecords(recordType, {
+      timeRangeFilter: {
+        operator: "between",
+        startTime: startTimeEpochMs,
+        endTime: endTimeEpochMs
+      },
+      ...(extraOps ?? {})
+    });
+    const records = Array.isArray(result) ? result : (result?.records ?? []);
+    console.log(`[healthConnect] readHcRecords(${recordType}) → ${records.length} registros`);
+    if (records.length > 0) {
+      console.log(`[healthConnect] primer registro:`, JSON.stringify(records[0]).slice(0, 200));
+    }
+    return records;
+  } catch (err) {
+    console.error(`[healthConnect] readHcRecords(${recordType}) ERROR:`, err);
+    return [];
+  }
 }
 
 /** Es true solo si el APK está corriendo en Android. */
