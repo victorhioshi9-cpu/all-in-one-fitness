@@ -382,16 +382,37 @@ export const HealthConnectScreen: React.FC = () => {
       )}
 
       {/* Mensaje cuando no hay datos */}
-      {!todayMetrics && (permState === "granted" || permState === "partial") && (
-        <Section title="📊 Datos de hoy">
+      {(!todayMetrics || (todayMetrics && !todayMetrics.steps && !todayMetrics.body?.weightKg)) && (permState === "granted" || permState === "partial") && (
+        <Section title="📊 Sin datos del reloj todavía">
           <Text style={styles.hint}>
-            ⏳ Esperando datos de Mi Fitness...{"\n\n"}
-            Asegúrate de que:{"\n"}
-            1. Mi Fitness está instalado y sincronizado con tu smartwatch.{"\n"}
-            2. Tu báscula Xiaomi S400 está vinculada en Mi Fitness.{"\n"}
-            3. Mi Fitness tiene permisos en Health Connect (Ajustes → Health Connect → Permisos → Mi Fitness → Permitir).{"\n"}
-            4. Pulsa "Actualizar datos del reloj" después de sincronizar.
+            ⏳ No se recibieron datos de Mi Fitness. Pasos para solucionar:
           </Text>
+          <Text style={styles.hint}>
+            {"1️⃣ Abre Mi Fitness en tu teléfono y sincroniza el smartwatch (desliza abajo para refrescar)."}
+            {"\n2️⃣ Súbelo a la báscula S400 para que envíe peso y % grasa."}
+            {"\n3️⃣ Mi Fitness necesita permisos de ESCRITURA en Health Connect:"}
+            {"\n   Ajustes → Health Connect → Permisos → Mi Fitness → Permitir todo"}
+            {"\n4️⃣ Vuelve aquí y pulsa 'Actualizar datos del reloj'."}
+          </Text>
+          <Pressable
+            style={[styles.btnPrimary, { marginTop: spacing.sm }]}
+            onPress={() => {
+              // Abrir ajustes de HC para que el usuario dé permisos a Mi Fitness
+              openHealthConnectApp();
+            }}
+          >
+            <Text style={styles.btnPrimaryText}>Abrir Health Connect</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.btnSecondary, { marginTop: spacing.sm }]}
+            onPress={async () => {
+              setRefreshing(true);
+              await loadTodayMetrics();
+              setRefreshing(false);
+            }}
+          >
+            <Text style={styles.btnSecondaryText}>🔄 Actualizar datos del reloj</Text>
+          </Pressable>
         </Section>
       )}
 

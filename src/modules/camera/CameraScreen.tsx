@@ -87,12 +87,12 @@ export const CameraScreen: React.FC = () => {
   useEffect(() => {
     if (mode !== "tracking" || !pose) return;
     // ML Kit devuelve coordenadas en píxeles. Necesitamos normalizar.
-    // leftHip y rightHip tienen {x, y} en píxeles.
-    const lh = pose.leftHip;
-    const rh = pose.rightHip;
+    // Los landmarks se llaman leftHipPosition, rightHipPosition (con sufijo).
+    const lh = pose.leftHipPosition;
+    const rh = pose.rightHipPosition;
     if (!lh || !rh) return;
-    // Normalizar Y respecto al alto de la pantalla.
-    const hipY = ((lh.y + rh.y) / 2) / height;
+    // Normalizar Y respecto al alto del frame (1920 típico).
+    const hipY = ((lh.y + rh.y) / 2) / 1920;
     if (typeof hipY !== "number" || isNaN(hipY)) return;
 
     const last = lastHipYRef.current;
@@ -116,7 +116,7 @@ export const CameraScreen: React.FC = () => {
         }
       }
     }
-  }, [pose, mode, height]);
+  }, [pose, mode]);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -384,15 +384,15 @@ export const CameraScreen: React.FC = () => {
 // SkeletonPoints — overlay simple que dibuja los landmarks de ML Kit
 // ============================================================================
 const SKELETON_CONNECTIONS: [string, string][] = [
-  ["leftShoulder", "rightShoulder"],
-  ["leftShoulder", "leftElbow"], ["leftElbow", "leftWrist"],
-  ["rightShoulder", "rightElbow"], ["rightElbow", "rightWrist"],
-  ["leftShoulder", "leftHip"], ["rightShoulder", "rightHip"],
-  ["leftHip", "rightHip"],
-  ["leftHip", "leftKnee"], ["leftKnee", "leftAnkle"],
-  ["rightHip", "rightKnee"], ["rightKnee", "rightAnkle"],
-  ["nose", "leftEye"], ["nose", "rightEye"],
-  ["leftEye", "leftEar"], ["rightEye", "rightEar"]
+  ["leftShoulderPosition", "rightShoulderPosition"],
+  ["leftShoulderPosition", "leftElbowPosition"], ["leftElbowPosition", "leftWristPosition"],
+  ["rightShoulderPosition", "rightElbowPosition"], ["rightElbowPosition", "rightWristPosition"],
+  ["leftShoulderPosition", "leftHipPosition"], ["rightShoulderPosition", "rightHipPosition"],
+  ["leftHipPosition", "rightHipPosition"],
+  ["leftHipPosition", "leftKneePosition"], ["leftKneePosition", "leftAnklePosition"],
+  ["rightHipPosition", "rightKneePosition"], ["rightKneePosition", "rightAnklePosition"],
+  ["nosePosition", "leftEyePosition"], ["nosePosition", "rightEyePosition"],
+  ["leftEyePosition", "leftEarPosition"], ["rightEyePosition", "rightEarPosition"]
 ];
 
 const SkeletonPoints: React.FC<{
@@ -402,21 +402,28 @@ const SkeletonPoints: React.FC<{
 }> = ({ pose, width, height }) => {
   // ML Kit devuelve coordenadas en píxeles del frame original.
   // Necesitamos escalarlas al tamaño de la pantalla.
-  // Asumimos que el frame es ~720px de ancho (típico de cámara trasera).
-  const FRAME_WIDTH = 720;
-  const FRAME_HEIGHT = 1280;
+  // El frame de la cámara suele ser ~720x1280 (portrait) o similar.
+  // Usamos las dimensiones del frame para escalar correctamente.
+  // Como no sabemos el tamaño exacto del frame, usamos un factor
+  // basado en el ancho del device.
+  const FRAME_WIDTH = 1080; // típico de cámara trasera
+  const FRAME_HEIGHT = 1920;
   const scaleX = width / FRAME_WIDTH;
   const scaleY = height / FRAME_HEIGHT;
 
   const points: React.ReactNode[] = [];
   const lines: React.ReactNode[] = [];
 
-  // Dibujar puntos
+  // Nombres EXACTOS que devuelve el plugin nativo (con sufijo "Position")
   const landmarkNames = [
-    "leftShoulder", "rightShoulder", "leftElbow", "rightElbow",
-    "leftWrist", "rightWrist", "leftHip", "rightHip",
-    "leftKnee", "rightKnee", "leftAnkle", "rightAnkle",
-    "nose", "leftEye", "rightEye", "leftEar", "rightEar"
+    "leftShoulderPosition", "rightShoulderPosition",
+    "leftElbowPosition", "rightElbowPosition",
+    "leftWristPosition", "rightWristPosition",
+    "leftHipPosition", "rightHipPosition",
+    "leftKneePosition", "rightKneePosition",
+    "leftAnklePosition", "rightAnklePosition",
+    "nosePosition", "leftEyePosition", "rightEyePosition",
+    "leftEarPosition", "rightEarPosition"
   ];
 
   for (const name of landmarkNames) {
