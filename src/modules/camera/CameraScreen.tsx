@@ -102,24 +102,23 @@ export const CameraScreen: React.FC = () => {
   // Por defecto DESACTIVADO. El frame processor con runOnJS puede causar
   // crashes nativos en algunos dispositivos. El usuario lo activa manualmente
   // con el botón "Esqueleto ON/OFF" en el HUD.
-  // Si se activa y la app crashea, sabremos que el problema es el plugin nativo.
   const [poseEnabled, setPoseEnabled] = useState(false);
 
   // --- Pose detection simple ---
-  // Solo se inicializa si poseEnabled es true. Si el hook crashea, lo capturamos.
+  // REGLA DE HOOKS: los hooks se llaman SIEMPRE, sin condicionales.
+  // El parámetro 'active' controla si el frame processor hace algo o no.
+  // Llamar useSimplePoseFrameProcessor dentro de un if rompe areHookInputsEqual.
   let pose: any = null;
   let fps = 0;
   let frameProcessor: any = undefined;
-  if (poseEnabled && mode === "tracking") {
-    try {
-      const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
-      const result = useSimplePoseFrameProcessor(true);
-      pose = result.pose;
-      fps = result.fps;
-      frameProcessor = result.frameProcessor;
-    } catch (err: any) {
-      console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
-    }
+  try {
+    const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
+    const result = useSimplePoseFrameProcessor(poseEnabled && mode === "tracking");
+    pose = result.pose;
+    fps = result.fps;
+    frameProcessor = result.frameProcessor;
+  } catch (err: any) {
+    console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
   }
 
   // --- Contador automático de reps (heurística por altura de cadera) ---

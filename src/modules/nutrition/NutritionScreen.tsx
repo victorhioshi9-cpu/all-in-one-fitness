@@ -287,22 +287,46 @@ export const NutritionScreen: React.FC = () => {
       contentContainerStyle={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.accent} />}
     >
-      <Text style={styles.title}>Nutrición</Text>
-      <Text style={styles.subtitle}>Tu objetivo diario y registro de comidas</Text>
+      {/* === Header moderno con gradiente simulado === */}
+      <View style={styles.headerHero}>
+        <View style={styles.headerHeroTop}>
+          <View>
+            <Text style={styles.headerGreeting}>Nutrición</Text>
+            <Text style={styles.headerDate}>{new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" })}</Text>
+          </View>
+          <Pressable style={styles.headerScanBtn} onPress={() => setShowSearch(true)}>
+            <Text style={styles.headerScanEmoji}>📷</Text>
+          </Pressable>
+        </View>
 
-      {/* === Card: Macros hoy con objetivo === */}
+        {/* Anillo de calorías estilo Fitia */}
+        {macros && (
+          <View style={styles.calorieRing}>
+            <View style={styles.calorieRingInner}>
+              <Text style={styles.calorieValue}>{Math.round(macros.kcal)}</Text>
+              <Text style={styles.calorieLabel}>consumidas</Text>
+              <Text style={styles.calorieTarget}>de {targetKcal} kcal</Text>
+              <Text style={[styles.calorieRemaining, macros.kcal > targetKcal && { color: colors.error }]}>
+                {macros.kcal > targetKcal
+                  ? `+${Math.round(macros.kcal - targetKcal)} exceso`
+                  : `${Math.round(targetKcal - macros.kcal)} restantes`}
+              </Text>
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* === Card: Macros con barras modernas === */}
       {macros && (
         <View style={styles.macrosCard}>
           <View style={styles.macrosHeader}>
-            <Text style={styles.cardTitle}>Hoy</Text>
-            <Text style={styles.macrosKcal}>
-              {Math.round(macros.kcal)} / {targetKcal} kcal
-            </Text>
+            <Text style={styles.cardTitle}>📊 Macros de hoy</Text>
+            <View style={styles.macrosPill}>
+              <Text style={styles.macrosPillText}>
+                {Math.round((macros.kcal / Math.max(1, targetKcal)) * 100)}%
+              </Text>
+            </View>
           </View>
-          <MacroBar
-            emoji="🔥" label="Calorías" value={macros.kcal} target={targetKcal}
-            unit="kcal" color={colors.accent}
-          />
           <MacroBar
             emoji="🥩" label="Proteína" value={macros.protein_g} target={targetProtein}
             unit="g" color={colors.catProtein}
@@ -648,17 +672,105 @@ const WeightSparkline: React.FC<{ data: { day: string; weightKg: number }[] }> =
 // ============================================================================
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.bg },
-  container: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  title: { color: colors.bright, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
-  subtitle: { color: colors.textMuted, fontSize: 13, marginBottom: spacing.lg },
+  container: { padding: 0, paddingBottom: spacing.xxl },
 
-  // Macros card
+  // === Header hero moderno ===
+  headerHero: {
+    backgroundColor: colors.surfaceElevated,
+    borderBottomLeftRadius: radius.xl,
+    borderBottomRightRadius: radius.xl,
+    padding: spacing.xl,
+    paddingTop: spacing.xxl,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.dim
+  },
+  headerHeroTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: spacing.xl
+  },
+  headerGreeting: {
+    color: colors.bright,
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: -0.5
+  },
+  headerDate: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: 2,
+    textTransform: "capitalize"
+  },
+  headerScanBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  headerScanEmoji: { fontSize: 20 },
+
+  // === Anillo de calorías estilo Fitia ===
+  calorieRing: {
+    alignSelf: "center",
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    borderWidth: 8,
+    borderColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.bg,
+    marginTop: spacing.sm
+  },
+  calorieRingInner: { alignItems: "center" },
+  calorieValue: {
+    color: colors.bright,
+    fontSize: 36,
+    fontWeight: "900"
+  },
+  calorieLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 2
+  },
+  calorieTarget: {
+    color: colors.bright,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 4
+  },
+  calorieRemaining: {
+    color: colors.ok,
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 4
+  },
+
+  // === Card de macros moderna ===
   macrosCard: {
-    backgroundColor: colors.surfaceElevated, borderRadius: radius.lg, padding: spacing.lg,
-    marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.dim
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.dim
   },
   macrosHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md },
-  cardTitle: { color: colors.bright, fontSize: 14, fontWeight: "800", letterSpacing: 1, marginBottom: spacing.md },
+  cardTitle: { color: colors.bright, fontSize: 14, fontWeight: "800", letterSpacing: 0.5, marginBottom: spacing.md },
+  macrosPill: {
+    backgroundColor: colors.accent + "22",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent
+  },
+  macrosPillText: { color: colors.accent, fontSize: 12, fontWeight: "900" },
   macrosKcal: { color: colors.accent, fontSize: 18, fontWeight: "900" },
   macroRow: { marginBottom: spacing.sm },
   macroHeader: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
