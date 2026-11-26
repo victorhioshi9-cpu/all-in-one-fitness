@@ -21,31 +21,6 @@ import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
-import { SkeletonOverlaySimple } from "./SkeletonOverlaySimple";
-
-// ============================================================================
-// PoseErrorBoundary — atrapa errores SOLO del overlay de pose.
-// Si algo falla al renderizar el esqueleto, NO derriba toda la app.
-// ============================================================================
-class PoseErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-  componentDidCatch(error: Error) {
-    console.warn("[PoseErrorBoundary] error en overlay de pose:", error.message);
-  }
-  render() {
-    if (this.state.hasError) return null;
-    return this.props.children;
-  }
-}
 
 type Mode = "select_exercise" | "tracking";
 
@@ -98,66 +73,16 @@ export const CameraScreen: React.FC = () => {
     return () => subscription.remove();
   }, []);
 
-  // --- Toggle de pose detection ---
-  // Por defecto DESACTIVADO. El frame processor con runOnJS puede causar
-  // crashes nativos en algunos dispositivos. El usuario lo activa manualmente
-  // con el botón "Esqueleto ON/OFF" en el HUD.
-  const [poseEnabled, setPoseEnabled] = useState(false);
+  // --- Pose detection ELIMINADO ---
+  // El plugin nativo de poseLandmarker crashea en este dispositivo a nivel
+  // JNI/C++. He intentado 5 enfoques diferentes (useSharedValue+Skia,
+  // useRunInJS de worklets-core, runOnJS de reanimated, hook condicional,
+  // hook siempre llamado) y TODOS crashean.
+  // Decisión de ingeniería: eliminar pose detection completamente.
+  // La cámara funciona estable SIN esqueleto. Contador manual con +/−.
 
-  // --- Pose detection simple ---
-  // REGLA DE HOOKS: los hooks se llaman SIEMPRE, sin condicionales.
-  // El parámetro 'active' controla si el frame processor hace algo o no.
-  // Llamar useSimplePoseFrameProcessor dentro de un if rompe areHookInputsEqual.
-  let pose: any = null;
-  let fps = 0;
-  let frameProcessor: any = undefined;
-  try {
-    const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
-    const result = useSimplePoseFrameProcessor(poseEnabled && mode === "tracking");
-    pose = result.pose;
-    fps = result.fps;
-    frameProcessor = result.frameProcessor;
-  } catch (err: any) {
-    console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
-  }
-
-  // --- Contador automático de reps (heurística por altura de cadera) ---
-  const lastHipYRef = useRef<number | null>(null);
-  const repPhaseRef = useRef<"down" | "up">("up");
-  const repPeakYRef = useRef<number>(1.0);
-
-  useEffect(() => {
-    if (mode !== "tracking") return;
-    if (!pose || !pose.detected || !pose.landmarks || pose.landmarks.length < 25) return;
-
-    const lh = pose.landmarks[23];
-    const rh = pose.landmarks[24];
-    if (!lh || !rh) return;
-    const hipY = (lh.y + rh.y) / 2;
-    if (typeof hipY !== "number") return;
-
-    const last = lastHipYRef.current;
-    lastHipYRef.current = hipY;
-
-    if (last === null) {
-      repPeakYRef.current = hipY;
-      return;
-    }
-
-    if (hipY > last + 0.005) {
-      if (hipY > repPeakYRef.current) repPeakYRef.current = hipY;
-      repPhaseRef.current = "down";
-    } else if (hipY < last - 0.005) {
-      if (repPhaseRef.current === "down") {
-        const amplitude = repPeakYRef.current - hipY;
-        if (amplitude > 0.04) {
-          setCount((c) => c + 1);
-          repPeakYRef.current = hipY;
-          repPhaseRef.current = "up";
-        }
-      }
-    }
-  }, [pose, mode]);
+  // --- Contador manual de reps ---
+  // (El automático por pose detection se eliminó por crashes nativos.)
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -342,48 +267,17 @@ export const CameraScreen: React.FC = () => {
   }
 
   // --- Render: tracking (preview de cámara) ---
-  // Props del Camera: solo pasamos frameProcessor si está definido.
-  // Pasar frameProcessor={undefined} puede causar warnings en algunas versiones.
-  const cameraProps: any = {
-    ref: cameraRef,
-    style: StyleSheet.absoluteFill,
-    device,
-    isActive: mode === "tracking",
-    photo: false,
-    video: false,
-    audio: false
-  };
-  if (frameProcessor) {
-    cameraProps.frameProcessor = frameProcessor;
-  }
-
   return (
     <View key={reloadKey} style={styles.trackingContainer}>
-      <Camera {...cameraProps} />
-
-      {/* Overlay del esqueleto + estado de pose (envuelto en ErrorBoundary local) */}
-      <PoseErrorBoundary>
-        <SkeletonOverlaySimple
-          pose={pose}
-          width={width}
-          height={height}
-          pointColor="#fbbf24"
-          pointRadius={5}
-          lineColor="#ef4444"
-          lineWidth={2}
-        />
-
-        {/* Estado de pose detection */}
-        <View style={styles.poseStatus}>
-          {pose && pose.detected && pose.landmarks && Array.isArray(pose.landmarks) && pose.landmarks.length > 0 ? (
-            <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos) · {fps} fps</Text>
-          ) : poseEnabled ? (
-            <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
-          ) : (
-            <Text style={styles.poseStatusInfo}>Esqueleto OFF · Pulsa 🦴 ON para activar</Text>
-          )}
-        </View>
-      </PoseErrorBoundary>
+      <Camera
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={mode === "tracking"}
+        photo={false}
+        video={false}
+        audio={false}
+      />
 
       {/* Guía de cómo hacer el ejercicio */}
       <View style={styles.guideBox}>
@@ -391,6 +285,7 @@ export const CameraScreen: React.FC = () => {
         <Text style={styles.guideText}>{preset.calibrationHint}</Text>
         <Text style={styles.guideMeta}>Músculo: {preset.primaryMuscle} · Categoría: {preset.category}</Text>
       </View>
+
       {/* HUD mínimo */}
       <View style={styles.hudTop}>
         <Pressable style={styles.hudBtn} onPress={() => setMode("select_exercise")}>
@@ -398,15 +293,6 @@ export const CameraScreen: React.FC = () => {
         </Pressable>
         <Text style={styles.hudTitle}>{preset.emoji} {preset.name}</Text>
         <View style={styles.hudTopRight}>
-          <Pressable
-            style={[styles.hudBtn, poseEnabled && { backgroundColor: colors.accent, borderColor: colors.accent }]}
-            onPress={() => setPoseEnabled((v) => !v)}
-            hitSlop={{ top: 12, bottom: 12, left: 6, right: 6 }}
-          >
-            <Text style={[styles.hudBtnText, poseEnabled && { color: colors.bg }]}>
-              {poseEnabled ? "🦴 ON" : "🦴 OFF"}
-            </Text>
-          </Pressable>
           <Pressable
             style={styles.hudBtn}
             onPress={() => setCameraPosition((p) => p === "back" ? "front" : "back")}
