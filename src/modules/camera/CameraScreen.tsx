@@ -74,19 +74,28 @@ export const CameraScreen: React.FC = () => {
     return () => subscription.remove();
   }, []);
 
+  // --- Toggle de pose detection ---
+  // Por defecto DESACTIVADO. El frame processor con runOnJS puede causar
+  // crashes nativos en algunos dispositivos. El usuario lo activa manualmente
+  // con el botón "Esqueleto ON/OFF" en el HUD.
+  // Si se activa y la app crashea, sabremos que el problema es el plugin nativo.
+  const [poseEnabled, setPoseEnabled] = useState(false);
+
   // --- Pose detection simple ---
-  // Importado aquí dentro para que si el hook crashea, no derribe toda la app.
+  // Solo se inicializa si poseEnabled es true. Si el hook crashea, lo capturamos.
   let pose: any = null;
   let fps = 0;
   let frameProcessor: any = undefined;
-  try {
-    const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
-    const result = useSimplePoseFrameProcessor(mode === "tracking");
-    pose = result.pose;
-    fps = result.fps;
-    frameProcessor = result.frameProcessor;
-  } catch (err: any) {
-    console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
+  if (poseEnabled && mode === "tracking") {
+    try {
+      const { useSimplePoseFrameProcessor } = require("./hooks/usePoseFrameProcessorSimple");
+      const result = useSimplePoseFrameProcessor(true);
+      pose = result.pose;
+      fps = result.fps;
+      frameProcessor = result.frameProcessor;
+    } catch (err: any) {
+      console.warn("[CameraScreen] pose hook no disponible:", err?.message ?? err);
+    }
   }
 
   // --- Contador automático de reps (heurística por altura de cadera) ---
@@ -338,10 +347,10 @@ export const CameraScreen: React.FC = () => {
       <View style={styles.poseStatus}>
         {pose && pose.detected ? (
           <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos) · {fps} fps</Text>
+        ) : poseEnabled ? (
+          <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
         ) : (
-          <Text style={styles.poseStatusWarn}>
-            {frameProcessor ? `Esperando cuerpo… · ${fps} fps` : "Pose detection no disponible"}
-          </Text>
+          <Text style={styles.poseStatusInfo}>Esqueleto OFF · Pulsa 🦴 ON para activar</Text>
         )}
       </View>
 
@@ -357,13 +366,24 @@ export const CameraScreen: React.FC = () => {
           <Text style={styles.hudBtnText}>← Atrás</Text>
         </Pressable>
         <Text style={styles.hudTitle}>{preset.emoji} {preset.name}</Text>
-        <Pressable
-          style={styles.hudBtn}
-          onPress={() => setCameraPosition((p) => p === "back" ? "front" : "back")}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Text style={styles.hudBtnText}>{cameraPosition === "back" ? "🔄 Frontal" : "🔄 Trasera"}</Text>
-        </Pressable>
+        <View style={styles.hudTopRight}>
+          <Pressable
+            style={[styles.hudBtn, poseEnabled && { backgroundColor: colors.accent, borderColor: colors.accent }]}
+            onPress={() => setPoseEnabled((v) => !v)}
+            hitSlop={{ top: 12, bottom: 12, left: 6, right: 6 }}
+          >
+            <Text style={[styles.hudBtnText, poseEnabled && { color: colors.bg }]}>
+              {poseEnabled ? "🦴 ON" : "🦴 OFF"}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={styles.hudBtn}
+            onPress={() => setCameraPosition((p) => p === "back" ? "front" : "back")}
+            hitSlop={{ top: 12, bottom: 12, left: 6, right: 6 }}
+          >
+            <Text style={styles.hudBtnText}>🔄</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.hudBottom}>
@@ -454,6 +474,7 @@ const styles = StyleSheet.create({
   // Tracking
   trackingContainer: { flex: 1, backgroundColor: "#000" },
   hudTop: { position: "absolute", top: 40, left: 12, right: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  hudTopRight: { flexDirection: "row", gap: 6, alignItems: "center" },
   hudBtn: { backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim },
   hudBtnText: { color: colors.bright, fontWeight: "700", fontSize: 13 },
   hudTitle: { color: colors.bright, fontSize: 16, fontWeight: "800", backgroundColor: "rgba(8,10,14,0.85)", paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.sm },
@@ -461,6 +482,7 @@ const styles = StyleSheet.create({
   poseStatus: { position: "absolute", top: 90, left: 12, right: 12, alignItems: "center" },
   poseStatusOk: { backgroundColor: "rgba(34,197,94,0.9)", color: "#fff", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
   poseStatusWarn: { backgroundColor: "rgba(245,158,11,0.9)", color: "#000", fontSize: 12, fontWeight: "700", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm },
+  poseStatusInfo: { backgroundColor: "rgba(8,10,14,0.85)", color: colors.textMuted, fontSize: 11, fontWeight: "600", paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim },
 
   guideBox: {
     position: "absolute", top: 130, left: 12, right: 12,
