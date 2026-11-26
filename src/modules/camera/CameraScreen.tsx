@@ -21,6 +21,7 @@ import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
+import { usePoseDetection } from "./hooks/usePoseDetection";
 
 type Mode = "select_exercise" | "tracking";
 
@@ -73,16 +74,49 @@ export const CameraScreen: React.FC = () => {
     return () => subscription.remove();
   }, []);
 
-  // --- Pose detection ELIMINADO ---
-  // El plugin nativo de poseLandmarker crashea en este dispositivo a nivel
-  // JNI/C++. He intentado 5 enfoques diferentes (useSharedValue+Skia,
-  // useRunInJS de worklets-core, runOnJS de reanimated, hook condicional,
-  // hook siempre llamado) y TODOS crashean.
-  // Decisión de ingeniería: eliminar pose detection completamente.
-  // La cámara funciona estable SIN esqueleto. Contador manual con +/−.
+  // --- Pose detection con Google ML Kit ---
+  // Usa el plugin nativo del paquete @scottjgilroy/react-native-vision-camera-v4-pose-detection.
+  // El hook se llama SIEMPRE (reglas de hooks). El parámetro 'active' controla.
+  const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking");
 
-  // --- Contador manual de reps ---
-  // (El automático por pose detection se eliminó por crashes nativos.)
+  // --- Contador automático de reps por altura de cadera ---
+  const lastHipYRef = useRef<number | null>(null);
+  const repPhaseRef = useRef<"down" | "up">("up");
+  const repPeakYRef = useRef<number>(1.0);
+
+  useEffect(() => {
+    if (mode !== "tracking" || !pose) return;
+    // ML Kit devuelve coordenadas en píxeles. Necesitamos normalizar.
+    // leftHip y rightHip tienen {x, y} en píxeles.
+    const lh = pose.leftHip;
+    const rh = pose.rightHip;
+    if (!lh || !rh) return;
+    // Normalizar Y respecto al alto de la pantalla.
+    const hipY = ((lh.y + rh.y) / 2) / height;
+    if (typeof hipY !== "number" || isNaN(hipY)) return;
+
+    const last = lastHipYRef.current;
+    lastHipYRef.current = hipY;
+
+    if (last === null) {
+      repPeakYRef.current = hipY;
+      return;
+    }
+
+    if (hipY > last + 0.01) {
+      if (hipY > repPeakYRef.current) repPeakYRef.current = hipY;
+      repPhaseRef.current = "down";
+    } else if (hipY < last - 0.01) {
+      if (repPhaseRef.current === "down") {
+        const amplitude = repPeakYRef.current - hipY;
+        if (amplitude > 0.05) {
+          setCount((c) => c + 1);
+          repPeakYRef.current = hipY;
+          repPhaseRef.current = "up";
+        }
+      }
+    }
+  }, [pose, mode, height]);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -266,7 +300,7 @@ export const CameraScreen: React.FC = () => {
     );
   }
 
-  // --- Render: tracking (preview de cámara) ---
+  // --- Render: tracking (preview de cámara + pose detection) ---
   return (
     <View key={reloadKey} style={styles.trackingContainer}>
       <Camera
@@ -277,7 +311,22 @@ export const CameraScreen: React.FC = () => {
         photo={false}
         video={false}
         audio={false}
+        frameProcessor={frameProcessor}
       />
+
+      {/* Overlay de puntos del esqueleto (RN puro, sin Skia) */}
+      {pose && <SkeletonPoints pose={pose} width={width} height={height} />}
+
+      {/* Estado de pose detection */}
+      <View style={styles.poseStatus}>
+        {pose ? (
+          <Text style={styles.poseStatusOk}>✓ Cuerpo detectado · {fps} fps · Reps auto</Text>
+        ) : poseAvailable ? (
+          <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
+        ) : (
+          <Text style={styles.poseStatusInfo}>ML Kit no disponible · contador manual</Text>
+        )}
+      </View>
 
       {/* Guía de cómo hacer el ejercicio */}
       <View style={styles.guideBox}>
@@ -327,6 +376,112 @@ export const CameraScreen: React.FC = () => {
           <Text style={styles.hudStatUnit}>reps</Text>
         </View>
       </View>
+    </View>
+  );
+};
+
+// ============================================================================
+// SkeletonPoints — overlay simple que dibuja los landmarks de ML Kit
+// ============================================================================
+const SKELETON_CONNECTIONS: [string, string][] = [
+  ["leftShoulder", "rightShoulder"],
+  ["leftShoulder", "leftElbow"], ["leftElbow", "leftWrist"],
+  ["rightShoulder", "rightElbow"], ["rightElbow", "rightWrist"],
+  ["leftShoulder", "leftHip"], ["rightShoulder", "rightHip"],
+  ["leftHip", "rightHip"],
+  ["leftHip", "leftKnee"], ["leftKnee", "leftAnkle"],
+  ["rightHip", "rightKnee"], ["rightKnee", "rightAnkle"],
+  ["nose", "leftEye"], ["nose", "rightEye"],
+  ["leftEye", "leftEar"], ["rightEye", "rightEar"]
+];
+
+const SkeletonPoints: React.FC<{
+  pose: any;
+  width: number;
+  height: number;
+}> = ({ pose, width, height }) => {
+  // ML Kit devuelve coordenadas en píxeles del frame original.
+  // Necesitamos escalarlas al tamaño de la pantalla.
+  // Asumimos que el frame es ~720px de ancho (típico de cámara trasera).
+  const FRAME_WIDTH = 720;
+  const FRAME_HEIGHT = 1280;
+  const scaleX = width / FRAME_WIDTH;
+  const scaleY = height / FRAME_HEIGHT;
+
+  const points: React.ReactNode[] = [];
+  const lines: React.ReactNode[] = [];
+
+  // Dibujar puntos
+  const landmarkNames = [
+    "leftShoulder", "rightShoulder", "leftElbow", "rightElbow",
+    "leftWrist", "rightWrist", "leftHip", "rightHip",
+    "leftKnee", "rightKnee", "leftAnkle", "rightAnkle",
+    "nose", "leftEye", "rightEye", "leftEar", "rightEar"
+  ];
+
+  for (const name of landmarkNames) {
+    const lm = pose[name];
+    if (!lm || typeof lm.x !== "number" || typeof lm.y !== "number") continue;
+    const left = lm.x * scaleX - 5;
+    const top = lm.y * scaleY - 5;
+    points.push(
+      <View
+        key={`pt-${name}`}
+        style={{
+          position: "absolute",
+          left,
+          top,
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+          backgroundColor: "#fbbf24",
+          borderWidth: 1,
+          borderColor: "#fff"
+        }}
+      />
+    );
+  }
+
+  // Dibujar líneas
+  for (let i = 0; i < SKELETON_CONNECTIONS.length; i++) {
+    const [aName, bName] = SKELETON_CONNECTIONS[i];
+    const a = pose[aName];
+    const b = pose[bName];
+    if (!a || !b) continue;
+    if (typeof a.x !== "number" || typeof b.x !== "number") continue;
+
+    const x1 = a.x * scaleX;
+    const y1 = a.y * scaleY;
+    const x2 = b.x * scaleX;
+    const y2 = b.y * scaleY;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    if (length < 2) continue;
+
+    const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+    lines.push(
+      <View
+        key={`ln-${i}`}
+        style={{
+          position: "absolute",
+          left: x1,
+          top: y1 - 1.5,
+          width: length,
+          height: 3,
+          backgroundColor: "#ef4444",
+          transform: [{ rotate: `${angleDeg}deg` }]
+        }}
+      />
+    );
+  }
+
+  return (
+    <View style={{ position: "absolute", top: 0, left: 0, width, height }} pointerEvents="none">
+      {lines}
+      {points}
     </View>
   );
 };
