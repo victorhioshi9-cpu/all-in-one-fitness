@@ -17,7 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
-import { StyleSheet, Linking, Text, ScrollView } from "react-native";
+import { StyleSheet, Linking, Text, ScrollView, Pressable } from "react-native";
 
 // debugLogger intercepta console.log/warn/error globalmente para que los logs
 // se vean en el DebugLogPanel (botón 🐞 flotante). Importar lo antes posible.
@@ -45,25 +45,40 @@ const BEST_EFFORT_STEPS = new Set([
 
 class ScreenErrorBoundary extends React.Component<
   { children: React.ReactNode },
-  { error: Error | null }
+  { error: Error | null; key: number }
 > {
   constructor(props: { children: React.ReactNode }) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, key: 0 };
   }
 
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
 
+  componentDidCatch(error: Error) {
+    console.error("[ScreenErrorBoundary] error capturado:", error);
+  }
+
   render() {
     if (this.state.error) {
       return (
-        <ScrollView style={styles.errorBox}>
+        <ScrollView key={this.state.key} style={styles.errorBox}>
           <Text style={styles.errorTitle}>Error al iniciar la app:</Text>
           <Text style={styles.errorMsg}>
             [Render] {this.state.error?.message || String(this.state.error)}
           </Text>
+          <Text style={styles.errorStack}>
+            {this.state.error?.stack?.slice(0, 500) ?? ""}
+          </Text>
+          <Pressable
+            style={styles.retryBtn}
+            onPress={() => {
+              this.setState({ error: null, key: this.state.key + 1 });
+            }}
+          >
+            <Text style={styles.retryBtnText}>🔄 Reintentar</Text>
+          </Pressable>
         </ScrollView>
       );
     }
@@ -205,5 +220,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   errorBox: { flex: 1, padding: 20, backgroundColor: "#111" },
   errorTitle: { color: "#ff5555", fontWeight: "bold", fontSize: 18, marginBottom: 10 },
-  errorMsg: { color: "#fff", fontSize: 14 },
+  errorMsg: { color: "#fff", fontSize: 14, marginBottom: 10 },
+  errorStack: { color: "#aaa", fontSize: 11, fontFamily: "monospace", marginBottom: 20, lineHeight: 14 },
+  retryBtn: { backgroundColor: "#f59e0b", paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, alignSelf: "flex-start" },
+  retryBtnText: { color: "#000", fontWeight: "800", fontSize: 16 }
 });

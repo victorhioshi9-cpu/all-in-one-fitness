@@ -23,6 +23,30 @@ import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/ex
 import { colors, spacing, radius } from "@/theme/colors";
 import { SkeletonOverlaySimple } from "./SkeletonOverlaySimple";
 
+// ============================================================================
+// PoseErrorBoundary — atrapa errores SOLO del overlay de pose.
+// Si algo falla al renderizar el esqueleto, NO derriba toda la app.
+// ============================================================================
+class PoseErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error) {
+    console.warn("[PoseErrorBoundary] error en overlay de pose:", error.message);
+  }
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
 type Mode = "select_exercise" | "tracking";
 
 type ExerciseCategory = ExercisePreset["category"];
@@ -319,40 +343,48 @@ export const CameraScreen: React.FC = () => {
   }
 
   // --- Render: tracking (preview de cámara) ---
+  // Props del Camera: solo pasamos frameProcessor si está definido.
+  // Pasar frameProcessor={undefined} puede causar warnings en algunas versiones.
+  const cameraProps: any = {
+    ref: cameraRef,
+    style: StyleSheet.absoluteFill,
+    device,
+    isActive: mode === "tracking",
+    photo: false,
+    video: false,
+    audio: false
+  };
+  if (frameProcessor) {
+    cameraProps.frameProcessor = frameProcessor;
+  }
+
   return (
     <View key={reloadKey} style={styles.trackingContainer}>
-      <Camera
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={mode === "tracking"}
-        photo={false}
-        video={false}
-        audio={false}
-        frameProcessor={frameProcessor}
-      />
+      <Camera {...cameraProps} />
 
-      {/* Overlay del esqueleto (puntos amarillos + líneas rojas) */}
-      <SkeletonOverlaySimple
-        pose={pose}
-        width={width}
-        height={height}
-        pointColor="#fbbf24"
-        pointRadius={5}
-        lineColor="#ef4444"
-        lineWidth={2}
-      />
+      {/* Overlay del esqueleto + estado de pose (envuelto en ErrorBoundary local) */}
+      <PoseErrorBoundary>
+        <SkeletonOverlaySimple
+          pose={pose}
+          width={width}
+          height={height}
+          pointColor="#fbbf24"
+          pointRadius={5}
+          lineColor="#ef4444"
+          lineWidth={2}
+        />
 
-      {/* Estado de pose detection */}
-      <View style={styles.poseStatus}>
-        {pose && pose.detected && pose.landmarks && Array.isArray(pose.landmarks) ? (
-          <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos) · {fps} fps</Text>
-        ) : poseEnabled ? (
-          <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
-        ) : (
-          <Text style={styles.poseStatusInfo}>Esqueleto OFF · Pulsa 🦴 ON para activar</Text>
-        )}
-      </View>
+        {/* Estado de pose detection */}
+        <View style={styles.poseStatus}>
+          {pose && pose.detected && pose.landmarks && Array.isArray(pose.landmarks) && pose.landmarks.length > 0 ? (
+            <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos) · {fps} fps</Text>
+          ) : poseEnabled ? (
+            <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
+          ) : (
+            <Text style={styles.poseStatusInfo}>Esqueleto OFF · Pulsa 🦴 ON para activar</Text>
+          )}
+        </View>
+      </PoseErrorBoundary>
 
       {/* Guía de cómo hacer el ejercicio */}
       <View style={styles.guideBox}>
