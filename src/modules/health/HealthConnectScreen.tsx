@@ -53,6 +53,19 @@ export const HealthConnectScreen: React.FC = () => {
   const nativeLoaded = isNativeModuleLoaded();
   const [requestingPerm, setRequestingPerm] = useState(false);
 
+  const loadTodayMetrics = useCallback(async () => {
+    const today = todayISO();
+    const [steps, rhr, cal, sleep, body, stress] = await Promise.all([
+      readStepsForDay(today).catch(() => null),
+      readRestingHeartRate(today).catch(() => null),
+      readCaloriesForDay(today).catch(() => null),
+      readSleepForDay(today).catch(() => null),
+      readBodyCompositionForDay(today).catch(() => null),
+      readStressForDay(today).catch(() => null)
+    ]);
+    setTodayMetrics({ steps, rhr, cal, sleep, body, stress });
+  }, []);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     const [avail, perm, pending, running, last] = await Promise.all([
@@ -68,22 +81,14 @@ export const HealthConnectScreen: React.FC = () => {
     setWorkerRunning(running);
     setLastRun(last);
     setRefreshing(false);
-  }, []);
+
+    // Si tenemos permisos, cargar métricas inmediatamente.
+    if (perm === "granted" || perm === "partial") {
+      loadTodayMetrics();
+    }
+  }, [loadTodayMetrics]);
 
   useEffect(() => { refresh(); }, [refresh]);
-
-  const loadTodayMetrics = useCallback(async () => {
-    const today = todayISO();
-    const [steps, rhr, cal, sleep, body, stress] = await Promise.all([
-      readStepsForDay(today).catch(() => null),
-      readRestingHeartRate(today).catch(() => null),
-      readCaloriesForDay(today).catch(() => null),
-      readSleepForDay(today).catch(() => null),
-      readBodyCompositionForDay(today).catch(() => null),
-      readStressForDay(today).catch(() => null)
-    ]);
-    setTodayMetrics({ steps, rhr, cal, sleep, body, stress });
-  }, []);
 
   useEffect(() => {
     if (permState === "granted" || permState === "partial") {
@@ -238,17 +243,155 @@ export const HealthConnectScreen: React.FC = () => {
         </Pressable>
       </Section>
 
-      {/* --- Today metrics from Mi Fitness --- */}
+      {/* --- Dashboard de métricas del smartwatch + báscula --- */}
       {todayMetrics && (
-        <Section title="Datos de hoy (Mi Fitness vía Health Connect)">
-          <MetricRow label="Pasos" value={todayMetrics.steps ? `${todayMetrics.steps.value.toLocaleString()}` : "—"} />
-          <MetricRow label="FC Reposo" value={todayMetrics.rhr != null ? `${todayMetrics.rhr} bpm` : "—"} />
-          <MetricRow label="Calorías activas" value={todayMetrics.cal ? `${Math.round(todayMetrics.cal.activeKcal)} kcal` : "—"} />
-          <MetricRow label="Calorías basales" value={todayMetrics.cal ? `${Math.round(todayMetrics.cal.basalKcal)} kcal` : "—"} />
-          <MetricRow label="Sueño (asleep)" value={todayMetrics.sleep ? `${(todayMetrics.sleep.asleepMs / 3600000).toFixed(1)}h` : "—"} />
-          <MetricRow label="Peso" value={todayMetrics.body?.weightKg ? `${todayMetrics.body.weightKg.toFixed(1)} kg` : "—"} />
-          <MetricRow label="% Grasa" value={todayMetrics.body?.bodyFatPct != null ? `${todayMetrics.body.bodyFatPct.toFixed(1)}%` : "—"} />
-          <MetricRow label="Estrés" value={todayMetrics.stress ? `${todayMetrics.stress.stressIndex} (${todayMetrics.stress.method})` : "—"} />
+        <Section title="📊 Datos de hoy (Mi Fitness + Báscula S400)">
+          {/* Grid de tarjetas 2x4 */}
+          <View style={styles.metricsGrid}>
+            {/* Pasos */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>👟</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.steps ? todayMetrics.steps.value.toLocaleString() : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Pasos</Text>
+            </View>
+
+            {/* FC Reposo */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>❤️</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.rhr != null ? `${todayMetrics.rhr}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>FC Reposo (bpm)</Text>
+            </View>
+
+            {/* Calorías activas */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>🔥</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.cal ? `${Math.round(todayMetrics.cal.activeKcal)}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Kcal Activas</Text>
+            </View>
+
+            {/* Calorías basales */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>💤</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.cal ? `${Math.round(todayMetrics.cal.basalKcal)}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Kcal Basal</Text>
+            </View>
+
+            {/* Sueño */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>😴</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.sleep ? `${(todayMetrics.sleep.asleepMs / 3600000).toFixed(1)}h` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Sueño</Text>
+            </View>
+
+            {/* Estrés */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>😰</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.stress ? `${todayMetrics.stress.stressIndex}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Estrés</Text>
+            </View>
+
+            {/* Peso (báscula S400) */}
+            <View style={[styles.metricCard, { borderColor: colors.accent }]}>
+              <Text style={styles.metricEmoji}>⚖️</Text>
+              <Text style={[styles.metricValue, { color: colors.accent }]}>
+                {todayMetrics.body?.weightKg ? `${todayMetrics.body.weightKg.toFixed(1)}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Peso (kg)</Text>
+            </View>
+
+            {/* % Grasa (báscula S400) */}
+            <View style={[styles.metricCard, { borderColor: colors.accent }]}>
+              <Text style={styles.metricEmoji}>📏</Text>
+              <Text style={[styles.metricValue, { color: colors.accent }]}>
+                {todayMetrics.body?.bodyFatPct != null ? `${todayMetrics.body.bodyFatPct.toFixed(1)}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>% Grasa</Text>
+            </View>
+          </View>
+
+          {/* Resumen inteligente */}
+          {todayMetrics.body?.weightKg && (
+            <View style={styles.summaryBox}>
+              <Text style={styles.summaryTitle}>🧠 Análisis inteligente</Text>
+              {(() => {
+                const weight = todayMetrics.body.weightKg;
+                const bf = todayMetrics.body.bodyFatPct;
+                const steps = todayMetrics.steps?.value ?? 0;
+                const kcal = todayMetrics.cal?.activeKcal ?? 0;
+                const tips: string[] = [];
+
+                if (steps > 0) tips.push(`✅ ${steps.toLocaleString()} pasos hoy — ${steps >= 10000 ? "¡Objetivo cumplido!" : `faltan ${(10000 - steps).toLocaleString()} para 10k`}`);
+                if (kcal > 0) tips.push(`🔥 ${Math.round(kcal)} kcal activas quemadas`);
+                if (weight > 0) tips.push(`⚖️ Peso: ${weight.toFixed(1)} kg`);
+                if (bf != null) {
+                  const leanMass = weight * (1 - bf / 100);
+                  const fatMass = weight * (bf / 100);
+                  tips.push(`📊 Masa magra: ${leanMass.toFixed(1)} kg · Masa grasa: ${fatMass.toFixed(1)} kg`);
+                  if (bf > 25) tips.push(`⚠️ % grasa elevado (${bf.toFixed(1)}%). Considera déficit calórico.`);
+                  else if (bf < 12) tips.push(`✅ % grasa bajo (${bf.toFixed(1)}%). Excelente definición.`);
+                  else tips.push(`✅ % grasa en rango saludable (${bf.toFixed(1)}%)`);
+                }
+                if (todayMetrics.rhr != null) {
+                  if (todayMetrics.rhr > 80) tips.push(`⚠️ FC reposo alta (${todayMetrics.rhr} bpm). Posible fatiga o estrés.`);
+                  else if (todayMetrics.rhr < 60) tips.push(`✅ FC reposo baja (${todayMetrics.rhr} bpm). Buen estado cardiovascular.`);
+                  else tips.push(`✅ FC reposo normal (${todayMetrics.rhr} bpm)`);
+                }
+                if (todayMetrics.sleep) {
+                  const sleepH = todayMetrics.sleep.asleepMs / 3600000;
+                  if (sleepH < 6) tips.push(`⚠️ Solo ${sleepH.toFixed(1)}h de sueño. Necesitas dormir más.`);
+                  else if (sleepH >= 7) tips.push(`✅ ${sleepH.toFixed(1)}h de sueño. Buena recuperación.`);
+                }
+                if (tips.length === 0) tips.push("⏳ Esperando datos del smartwatch y la báscula...");
+
+                return tips.map((t, i) => (
+                  <Text key={i} style={styles.summaryTip}>{t}</Text>
+                ));
+              })()}
+            </View>
+          )}
+
+          {/* Indicador de fuente de datos */}
+          <Text style={styles.dataSourceHint}>
+            📡 Datos vía: Mi Fitness (smartwatch + báscula S400) → Health Connect → esta app
+          </Text>
+
+          {/* Botón refrescar datos */}
+          <Pressable
+            style={[styles.btnPrimary, { marginTop: spacing.sm }]}
+            onPress={async () => {
+              setRefreshing(true);
+              await loadTodayMetrics();
+              setRefreshing(false);
+            }}
+          >
+            <Text style={styles.btnPrimaryText}>🔄 Actualizar datos del reloj</Text>
+          </Pressable>
+        </Section>
+      )}
+
+      {/* Mensaje cuando no hay datos */}
+      {!todayMetrics && (permState === "granted" || permState === "partial") && (
+        <Section title="📊 Datos de hoy">
+          <Text style={styles.hint}>
+            ⏳ Esperando datos de Mi Fitness...{"\n\n"}
+            Asegúrate de que:{"\n"}
+            1. Mi Fitness está instalado y sincronizado con tu smartwatch.{"\n"}
+            2. Tu báscula Xiaomi S400 está vinculada en Mi Fitness.{"\n"}
+            3. Mi Fitness tiene permisos en Health Connect (Ajustes → Health Connect → Permisos → Mi Fitness → Permitir).{"\n"}
+            4. Pulsa "Actualizar datos del reloj" después de sincronizar.
+          </Text>
         </Section>
       )}
 
@@ -385,5 +528,46 @@ const styles = StyleSheet.create({
   },
   btnSecondaryText: { color: colors.bright, fontWeight: "700", fontSize: 14 },
   btnDisabled: { opacity: 0.5 },
-  hint: { color: colors.textMuted, fontSize: 13, marginBottom: spacing.sm, lineHeight: 19 }
+  hint: { color: colors.textMuted, fontSize: 13, marginBottom: spacing.sm, lineHeight: 19 },
+
+  // === Dashboard de métricas ===
+  metricsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginBottom: spacing.md
+  },
+  metricCard: {
+    width: "47%",
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.dim
+  },
+  metricEmoji: { fontSize: 24, marginBottom: 4 },
+  metricValue: { color: colors.bright, fontSize: 22, fontWeight: "900" },
+  metricLabel: { color: colors.textMuted, fontSize: 11, marginTop: 2, textAlign: "center" },
+
+  // === Análisis inteligente ===
+  summaryBox: {
+    backgroundColor: "rgba(245,158,11,0.08)",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.3)",
+    marginBottom: spacing.sm
+  },
+  summaryTitle: { color: colors.accent, fontSize: 14, fontWeight: "800", marginBottom: spacing.sm },
+  summaryTip: { color: colors.bright, fontSize: 12, lineHeight: 18, marginBottom: 4 },
+
+  // === Fuente de datos ===
+  dataSourceHint: {
+    color: colors.textMuted,
+    fontSize: 10,
+    textAlign: "center",
+    marginTop: spacing.xs,
+    fontStyle: "italic"
+  }
 });
