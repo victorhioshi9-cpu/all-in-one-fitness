@@ -100,6 +100,12 @@ export function useSimplePoseFrameProcessor(active: boolean): UseSimplePoseResul
         return;
       }
 
+      // Guard: si result no tiene forma esperada, descartar.
+      if (typeof result.detected !== "boolean") {
+        runOnJS(setPose)(null);
+        return;
+      }
+
       if (!result.detected) {
         runOnJS(setPose)({
           detected: false,
@@ -109,9 +115,14 @@ export function useSimplePoseFrameProcessor(active: boolean): UseSimplePoseResul
         return;
       }
 
-      const landmarks = ((result.landmarks || []) as any[]).map((l) => ({
-        x: Number(l.x), y: Number(l.y), z: Number(l.z),
-        v: Number(l.v ?? 0), p: Number(l.p ?? 0)
+      // Guard: landmarks debe ser un array. Si no, descartar.
+      const rawLandmarks = Array.isArray(result.landmarks) ? result.landmarks : [];
+      const landmarks = rawLandmarks.map((l: any) => ({
+        x: Number(l?.x ?? 0),
+        y: Number(l?.y ?? 0),
+        z: Number(l?.z ?? 0),
+        v: Number(l?.v ?? 0),
+        p: Number(l?.p ?? 0)
       }));
 
       const poseFrame: PoseFrame = {

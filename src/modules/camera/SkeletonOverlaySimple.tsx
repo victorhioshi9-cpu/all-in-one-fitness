@@ -43,18 +43,25 @@ export const SkeletonOverlaySimple: React.FC<SkeletonOverlaySimpleProps> = ({
 }) => {
   // Memoiza los elementos a renderizar.
   const { points, lines } = useMemo(() => {
-    if (!pose || !pose.detected || !pose.landmarks || pose.landmarks.length === 0) {
-      return { points: [], lines: [] };
-    }
+    // Guards exhaustivos: si algo es undefined/null, no renderizar nada.
+    if (!pose) return { points: [], lines: [] };
+    if (!pose.detected) return { points: [], lines: [] };
+    if (!pose.landmarks) return { points: [], lines: [] };
+    if (!Array.isArray(pose.landmarks)) return { points: [], lines: [] };
+    if (pose.landmarks.length === 0) return { points: [], lines: [] };
 
     const lm = pose.landmarks;
 
     // Puntos: cada landmark → un View circular.
     const points = lm.map((l, i) => {
+      if (!l) return null;
       // Saltarse landmarks con baja visibilidad (cara, etc.).
-      if (l.v < 0.3) return null;
-      const left = l.x * width - pointRadius;
-      const top = l.y * height - pointRadius;
+      const vis = typeof l.v === "number" ? l.v : 0;
+      if (vis < 0.3) return null;
+      const lx = typeof l.x === "number" ? l.x : 0;
+      const ly = typeof l.y === "number" ? l.y : 0;
+      const left = lx * width - pointRadius;
+      const top = ly * height - pointRadius;
       return (
         <View
           key={`pt-${i}`}
@@ -78,12 +85,19 @@ export const SkeletonOverlaySimple: React.FC<SkeletonOverlaySimpleProps> = ({
       const a = lm[i];
       const b = lm[j];
       if (!a || !b) return null;
-      if (a.v < 0.3 || b.v < 0.3) return null;
+      const av = typeof a.v === "number" ? a.v : 0;
+      const bv = typeof b.v === "number" ? b.v : 0;
+      if (av < 0.3 || bv < 0.3) return null;
 
-      const x1 = a.x * width;
-      const y1 = a.y * height;
-      const x2 = b.x * width;
-      const y2 = b.y * height;
+      const ax = typeof a.x === "number" ? a.x : 0;
+      const ay = typeof a.y === "number" ? a.y : 0;
+      const bx = typeof b.x === "number" ? b.x : 0;
+      const by = typeof b.y === "number" ? b.y : 0;
+
+      const x1 = ax * width;
+      const y1 = ay * height;
+      const x2 = bx * width;
+      const y2 = by * height;
 
       const dx = x2 - x1;
       const dy = y2 - y1;

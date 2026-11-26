@@ -345,7 +345,7 @@ export const CameraScreen: React.FC = () => {
 
       {/* Estado de pose detection */}
       <View style={styles.poseStatus}>
-        {pose && pose.detected ? (
+        {pose && pose.detected && pose.landmarks && Array.isArray(pose.landmarks) ? (
           <Text style={styles.poseStatusOk}>✓ Pose detectada ({pose.landmarks.length} puntos) · {fps} fps</Text>
         ) : poseEnabled ? (
           <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
