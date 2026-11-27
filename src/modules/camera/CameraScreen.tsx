@@ -14,7 +14,7 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
-  ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState
+  ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState, Switch
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useIsFocused } from "@react-navigation/native";
@@ -23,6 +23,11 @@ import { useKeepAwake } from "expo-keep-awake";
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
 import { colors, spacing, radius } from "@/theme/colors";
 import { usePoseDetection } from "./hooks/usePoseDetection";
+import { LiveFormEngine, EMPTY_SNAPSHOT, type LiveSnapshot } from "@/modules/biomechanics/liveFormEngine";
+import { FormGuideBox } from "./FormGuideBox";
+import {
+  GOAL_META, isCompound, recommendRestSeconds, formatRest, type TrainingGoal
+} from "./restRecommendation";
 
 // ============================================================================
 // SkeletonPoints — DEBE definirse ANTES de CameraScreen (const no se hoistinga)
@@ -135,8 +140,15 @@ export const CameraScreen: React.FC = () => {
   const [mode, setMode] = useState<Mode>("select_exercise");
   const [preset, setPreset] = useState<ExercisePreset>(EXERCISE_PRESETS.squat);
   const [targetReps, setTargetReps] = useState(8);
-  const [weight, setWeight] = useState(40);
+  // Peso extra: solo se muestra/usa si el usuario lo activa (peso corporal = apagado).
+  const [useExtraWeight, setUseExtraWeight] = useState(false);
+  const [weight, setWeight] = useState(20);
   const [count, setCount] = useState(0);
+  // Objetivo editable: reps + meta de entrenamiento (define el descanso sugerido).
+  const [goal, setGoal] = useState<TrainingGoal>("hypertrophy");
+  const [goalOpen, setGoalOpen] = useState(false);
+  const engineRef = useRef<LiveFormEngine | null>(null);
+  const [live, setLive] = useState<LiveSnapshot>(EMPTY_SNAPSHOT);
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>({});
   const cameraRef = useRef<any>(null);
@@ -196,41 +208,30 @@ export const CameraScreen: React.FC = () => {
   // Hook se llama SIEMPRE (reglas de hooks). El parámetro 'active' controla.
   const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking" && isFocused && appActive);
 
-  // --- Contador automático de reps (heurística por altura de cadera) ---
-  const lastHipYRef = useRef<number | null>(null);
-  const repPhaseRef = useRef<"down" | "up">("up");
-  const repPeakYRef = useRef<number>(1.0);
-
+  // --- Motor en vivo: cuenta reps del EJERCICIO SELECCIONADO + evalúa la técnica ---
+  // (reemplaza la heurística anterior de altura de cadera, que era igual para todos
+  // los ejercicios y no servía para curl, press, remo, etc.)
   useEffect(() => {
-    if (mode !== "tracking" || !pose || !pose._hasData) return;
-    const lhY = pose.leftHipPosition_y;
-    const rhY = pose.rightHipPosition_y;
-    if (typeof lhY !== "number" || typeof rhY !== "number") return;
-    const hipY = ((lhY + rhY) / 2) / (pose._frameH || 640);
-    if (typeof hipY !== "number" || isNaN(hipY)) return;
-
-    const last = lastHipYRef.current;
-    lastHipYRef.current = hipY;
-
-    if (last === null) {
-      repPeakYRef.current = hipY;
-      return;
-    }
-
-    if (hipY > last + 0.005) {
-      if (hipY > repPeakYRef.current) repPeakYRef.current = hipY;
-      repPhaseRef.current = "down";
-    } else if (hipY < last - 0.005) {
-      if (repPhaseRef.current === "down") {
-        const amplitude = repPeakYRef.current - hipY;
-        if (amplitude > 0.04) {
-          setCount((c) => c + 1);
-          repPeakYRef.current = hipY;
-          repPhaseRef.current = "up";
-        }
-      }
-    }
+    if (mode !== "tracking" || !engineRef.current) return;
+    const snap = engineRef.current.update(pose && pose._hasData ? (pose as any) : null, Date.now());
+    setCount(snap.count);
+    setLive(snap);
   }, [pose, mode]);
+
+  const adjustCount = (delta: number) => {
+    const next = Math.max(0, count + delta);
+    engineRef.current?.setCount(next);
+    setCount(next);
+  };
+
+  const newSet = () => {
+    engineRef.current?.reset();
+    setCount(0);
+    setLive(EMPTY_SNAPSHOT);
+  };
+
+  const goalReached = live.supportsReps && targetReps > 0 && count >= targetReps;
+  const restSeconds = recommendRestSeconds(goal, isCompound(preset), live.partialCount >= 2);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -262,7 +263,10 @@ export const CameraScreen: React.FC = () => {
   // --- Seleccionar ejercicio e ir directo a tracking ---
   const selectExercise = (ex: ExercisePreset) => {
     setPreset(ex);
+    engineRef.current = new LiveFormEngine(ex);
     setCount(0);
+    setLive(EMPTY_SNAPSHOT);
+    setGoalOpen(false);
     setMode("tracking");
   };
 
@@ -332,16 +336,23 @@ export const CameraScreen: React.FC = () => {
         {/* Steppers grandes */}
         <View style={styles.stepperRow}>
           <View style={styles.stepperBox}>
-            <Text style={styles.stepperLabel}>Peso (kg)</Text>
-            <View style={styles.stepperControls}>
-              <Pressable style={styles.stepperBtn} onPress={() => setWeight((w) => Math.max(0, w - 2.5))}>
-                <Text style={styles.stepperBtnText}>−</Text>
-              </Pressable>
-              <Text style={styles.stepperValue}>{weight}</Text>
-              <Pressable style={styles.stepperBtn} onPress={() => setWeight((w) => w + 2.5)}>
-                <Text style={styles.stepperBtnText}>+</Text>
-              </Pressable>
+            <View style={styles.extraRow}>
+              <Text style={styles.stepperLabel}>Peso extra</Text>
+              <Switch value={useExtraWeight} onValueChange={setUseExtraWeight} />
             </View>
+            {useExtraWeight ? (
+              <View style={styles.stepperControls}>
+                <Pressable style={styles.stepperBtn} onPress={() => setWeight((w) => Math.max(0, w - 2.5))}>
+                  <Text style={styles.stepperBtnText}>−</Text>
+                </Pressable>
+                <Text style={styles.stepperValue}>{weight}</Text>
+                <Pressable style={styles.stepperBtn} onPress={() => setWeight((w) => w + 2.5)}>
+                  <Text style={styles.stepperBtnText}>+</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Text style={styles.extraOff}>Peso corporal</Text>
+            )}
           </View>
           <View style={styles.stepperBox}>
             <Text style={styles.stepperLabel}>Reps objetivo</Text>
@@ -450,23 +461,38 @@ export const CameraScreen: React.FC = () => {
         <SkeletonPoints pose={pose} width={box.w} height={box.h} mirror={cameraPosition === "front"} />
       ) : null}
 
-      {/* Estado de pose detection */}
-      <View style={styles.poseStatus}>
-        {pose && pose._hasData ? (
-          <Text style={styles.poseStatusOk}>✓ Cuerpo detectado · {fps} fps · {pose._landmarkCount} puntos</Text>
-        ) : poseAvailable ? (
-          <Text style={styles.poseStatusWarn}>Esperando cuerpo… · {fps} fps</Text>
-        ) : (
-          <Text style={styles.poseStatusInfo}>ML Kit no disponible</Text>
-        )}
-      </View>
+      {/* Estado de pose: SOLO aparece si hay un problema (cuerpo perdido / FPS bajos).
+          Con el cuerpo detectado y fluido no se muestra, y al cumplir el objetivo desaparece. */}
+      {!goalReached && (!live.bodyVisible || (fps > 0 && fps < 12)) && (
+        <View style={styles.poseStatus} pointerEvents="none">
+          {poseAvailable ? (
+            <Text style={styles.poseStatusWarn}>
+              {live.bodyVisible ? `FPS bajos · ${fps}` : "Esperando cuerpo… colócate de cuerpo completo"}
+            </Text>
+          ) : (
+            <Text style={styles.poseStatusInfo}>ML Kit no disponible</Text>
+          )}
+        </View>
+      )}
 
-      {/* Guía de cómo hacer el ejercicio */}
-      <View style={styles.guideBox}>
-        <Text style={styles.guideTitle}>📋 Cómo hacer {preset.name}</Text>
-        <Text style={styles.guideText}>{preset.calibrationHint}</Text>
-        <Text style={styles.guideMeta}>Músculo: {preset.primaryMuscle} · Categoría: {preset.category}</Text>
-      </View>
+      {/* Cuadro de técnica (transparente): verde = bien · rojo = corrige · neutro = guía.
+          Al cumplir el objetivo se sustituye por el descanso recomendado. */}
+      {goalReached ? (
+        <View style={styles.restBox} pointerEvents="none">
+          <Text style={styles.restTitle}>✅ Objetivo cumplido</Text>
+          <Text style={styles.restText}>
+            Descansa ~{formatRest(restSeconds)} ({GOAL_META[goal].label.toLowerCase()})
+            {live.partialCount > 0 ? ` · ${live.partialCount} rep(s) parcial(es)` : ""}
+          </Text>
+        </View>
+      ) : (
+        <FormGuideBox
+          state={live.formState}
+          message={live.message}
+          exerciseName={preset.name}
+          hint={preset.calibrationHint}
+        />
+      )}
 
       {/* HUD mínimo */}
       <View style={styles.hudTop}>
@@ -485,29 +511,69 @@ export const CameraScreen: React.FC = () => {
         </View>
       </View>
 
+      {/* Editor del objetivo: reps + meta (define el descanso) */}
+      {goalOpen && (
+        <View style={styles.goalPanel}>
+          <Text style={styles.goalTitle}>¿Cuál es tu meta?</Text>
+          <View style={styles.goalChips}>
+            {(Object.keys(GOAL_META) as TrainingGoal[]).map((g) => (
+              <Pressable
+                key={g}
+                style={[styles.goalChip, goal === g && styles.goalChipOn]}
+                onPress={() => setGoal(g)}
+              >
+                <Text style={[styles.goalChipText, goal === g && { color: colors.bg }]}>
+                  {GOAL_META[g].emoji} {GOAL_META[g].label}
+                </Text>
+                <Text style={[styles.goalChipHint, goal === g && { color: colors.bg }]}>{GOAL_META[g].hint}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.stepperControls}>
+            <Text style={styles.goalLabel}>Reps objetivo</Text>
+            <Pressable style={styles.stepperBtn} onPress={() => setTargetReps((r) => Math.max(1, r - 1))}>
+              <Text style={styles.stepperBtnText}>−</Text>
+            </Pressable>
+            <Text style={styles.stepperValue}>{targetReps}</Text>
+            <Pressable style={styles.stepperBtn} onPress={() => setTargetReps((r) => r + 1)}>
+              <Text style={styles.stepperBtnText}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       <View style={styles.hudBottom}>
         <View style={styles.hudStat}>
           <Text style={styles.hudStatLabel}>Reps</Text>
           <Text style={styles.hudStatValue}>{count}</Text>
+          {!live.supportsReps && <Text style={styles.hudStatUnit}>isométrico</Text>}
           <View style={styles.hudStatRow}>
-            <Pressable style={styles.hudStepperBtn} onPress={() => setCount((c) => Math.max(0, c - 1))}>
+            <Pressable style={styles.hudStepperBtn} onPress={() => adjustCount(-1)}>
               <Text style={styles.hudStepperText}>−</Text>
             </Pressable>
-            <Pressable style={styles.hudStepperBtn} onPress={() => setCount((c) => c + 1)}>
+            <Pressable style={styles.hudStepperBtn} onPress={() => adjustCount(1)}>
               <Text style={styles.hudStepperText}>+</Text>
             </Pressable>
           </View>
         </View>
-        <View style={styles.hudStat}>
-          <Text style={styles.hudStatLabel}>Peso</Text>
-          <Text style={styles.hudStatValue}>{weight}</Text>
-          <Text style={styles.hudStatUnit}>kg</Text>
-        </View>
-        <View style={styles.hudStat}>
-          <Text style={styles.hudStatLabel}>Objetivo</Text>
+        {useExtraWeight && (
+          <View style={styles.hudStat}>
+            <Text style={styles.hudStatLabel}>Peso extra</Text>
+            <Text style={styles.hudStatValue}>{weight}</Text>
+            <Text style={styles.hudStatUnit}>kg</Text>
+          </View>
+        )}
+        <Pressable style={[styles.hudStat, goalReached && { borderColor: "#22c55e" }]} onPress={() => setGoalOpen((o) => !o)}>
+          <Text style={styles.hudStatLabel}>Objetivo ✎</Text>
           <Text style={styles.hudStatValue}>{targetReps}</Text>
-          <Text style={styles.hudStatUnit}>reps</Text>
-        </View>
+          <Text style={styles.hudStatUnit}>{GOAL_META[goal].label}</Text>
+        </Pressable>
+        {goalReached && (
+          <Pressable style={[styles.hudStat, { backgroundColor: colors.accent }]} onPress={newSet}>
+            <Text style={[styles.hudStatLabel, { color: colors.bg }]}>Nueva</Text>
+            <Text style={[styles.hudStatValue, { color: colors.bg, fontSize: 18 }]}>serie</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -599,5 +665,30 @@ const styles = StyleSheet.create({
   hudStatUnit: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   hudStatRow: { flexDirection: "row", gap: 6, marginTop: 6 },
   hudStepperBtn: { backgroundColor: colors.accent, width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  hudStepperText: { color: colors.bg, fontSize: 18, fontWeight: "900" }
+  hudStepperText: { color: colors.bg, fontSize: 18, fontWeight: "900" },
+
+  // Peso extra
+  extraRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm },
+  extraOff: { color: colors.textMuted, fontSize: 13, textAlign: "center", paddingVertical: 10 },
+
+  // Descanso recomendado (transparente)
+  restBox: {
+    position: "absolute", top: 100, left: 12, right: 12, padding: 12, borderRadius: 12,
+    borderWidth: 2, borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.18)"
+  },
+  restTitle: { color: "#fff", fontSize: 16, fontWeight: "800" },
+  restText: { color: "#fff", fontSize: 13, marginTop: 4 },
+
+  // Editor de objetivo
+  goalPanel: {
+    position: "absolute", bottom: 150, left: 12, right: 12, padding: spacing.md, borderRadius: radius.md,
+    backgroundColor: "rgba(8,10,14,0.92)", borderWidth: 1, borderColor: colors.accent, gap: spacing.sm
+  },
+  goalTitle: { color: colors.bright, fontSize: 14, fontWeight: "800" },
+  goalChips: { flexDirection: "row", gap: spacing.sm },
+  goalChip: { flex: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.dim, alignItems: "center" },
+  goalChipOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  goalChipText: { color: colors.bright, fontSize: 12, fontWeight: "800" },
+  goalChipHint: { color: colors.textMuted, fontSize: 10, marginTop: 2 },
+  goalLabel: { color: colors.textMuted, fontSize: 12, marginRight: spacing.sm }
 });

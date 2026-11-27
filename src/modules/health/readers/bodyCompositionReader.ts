@@ -165,3 +165,21 @@ export async function readWeightHistory(daysBack: number = 30): Promise<{ day: s
   }
   return out.reverse();
 }
+
+/**
+ * Última composición corporal registrada en los últimos `daysBack` días.
+ * La báscula NO se usa a diario: leer solo "hoy" dejaba el peso en "—".
+ * Devuelve el mismo objeto que readBodyCompositionForDay (del día del último pesaje).
+ */
+export async function readLatestBodyComposition(daysBack: number = 90): Promise<BodyComposition | null> {
+  const endMs = Date.now();
+  const startMs = endMs - daysBack * 86_400_000;
+  const raw = await readHcRecords("Weight", startMs, endMs, { pageSize: 500 });
+  if (raw.length === 0) return null;
+  const latest = raw
+    .map((r: any) => ({ t: typeof r.time === "number" ? r.time : new Date(r.time).getTime() }))
+    .filter((x) => !isNaN(x.t))
+    .sort((a, b) => b.t - a.t)[0];
+  if (!latest) return null;
+  return readBodyCompositionForDay(toLocalISO(new Date(latest.t)));
+}

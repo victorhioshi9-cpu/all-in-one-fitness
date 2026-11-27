@@ -31,7 +31,7 @@ import { readStepsForDay } from "@/modules/health/readers/stepsReader";
 import { readRestingHeartRate } from "@/modules/health/readers/heartRateReader";
 import { readCaloriesForDay } from "@/modules/health/readers/caloriesReader";
 import { readSleepForDay } from "@/modules/health/readers/sleepReader";
-import { readBodyCompositionForDay } from "@/modules/health/readers/bodyCompositionReader";
+import { readLatestBodyComposition } from "@/modules/health/readers/bodyCompositionReader";
 import { readStressForDay } from "@/modules/health/readers/stressReader";
 import { pushLastWorkoutToHealthConnect } from "@/modules/health/writers/workoutWriter";
 
@@ -60,7 +60,7 @@ export const HealthConnectScreen: React.FC = () => {
       readRestingHeartRate(today).catch(() => null),
       readCaloriesForDay(today).catch(() => null),
       readSleepForDay(today).catch(() => null),
-      readBodyCompositionForDay(today).catch(() => null),
+      readLatestBodyComposition(90).catch(() => null),
       readStressForDay(today).catch(() => null)
     ]);
     setTodayMetrics({ steps, rhr, cal, sleep, body, stress });
@@ -308,7 +308,9 @@ export const HealthConnectScreen: React.FC = () => {
               <Text style={[styles.metricValue, { color: colors.accent }]}>
                 {todayMetrics.body?.weightKg ? `${todayMetrics.body.weightKg.toFixed(1)}` : "—"}
               </Text>
-              <Text style={styles.metricLabel}>Peso (kg)</Text>
+              <Text style={styles.metricLabel}>
+                Peso (kg){todayMetrics.body?.measuredAt ? ` · ${new Date(todayMetrics.body.measuredAt).toLocaleDateString()}` : ""}
+              </Text>
             </View>
 
             {/* % Grasa (báscula S400) */}

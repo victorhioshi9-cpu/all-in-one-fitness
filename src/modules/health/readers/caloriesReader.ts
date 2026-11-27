@@ -10,9 +10,15 @@
  * Exponemos ambas para el cálculo de Energy Balance (Fase 2: Inteligencia Cruzada).
  */
 import { readHcRecords } from "../healthConnectClient";
-import { extractSourceApp, sumAccumulables, dedupeBySource } from "../sourceFilter";
+import { extractSourceApp, sumAccumulables, dedupeBySource, keepPrimarySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
-import { toMs } from "@/modules/intelligence/dateUtils";
+import { todayISO } from "@/modules/intelligence/dateUtils";
+
+// BUG CORREGIDO: antes se importaba `toMs` desde dateUtils, pero esa función NO existe
+// allí (es privada de healthConnectClient). Al ser undefined, readCaloriesForDay lanzaba
+// TypeError y la pantalla mostraba "—" en kcal. normalizeRecord ya entrega ms, así que
+// basta este helper tolerante.
+const toMs = (v: any): number => (typeof v === "number" ? v : new Date(v).getTime());
 import { dayRange } from "./stepsReader";
 
 export interface DailyCalories {
@@ -30,7 +36,7 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
   const { startMs, endMs } = dayRange(dayIso);
 
   // 1) Active Calories
-  const rawActive = await readHcRecords("ActiveCaloriesBurned", startMs, endMs);
+  const rawActive = await readHcRecords("ActiveCaloriesBurned", startMs, endMs, { pageSize: 5000 });
   const activeRecs: HealthRecord[] = rawActive.map((r: any) => ({
     recordType: "ActiveCaloriesBurned",
     sourceApp: extractSourceApp(r),
@@ -41,7 +47,7 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     unit: "kcal",
     rawMeta: r.metadata
   }));
-  const { unique: uniqueActive } = dedupeBySource(activeRecs);
+  const { unique: uniqueActive } = dedupeBySource(keepPrimarySource(activeRecs));
   const activeKcal = uniqueActive.length > 0 ? sumAccumulables(uniqueActive).value : 0;
 
   // 2) Basal Metabolic Rate
@@ -64,7 +70,13 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     const sorted = basalRecs.slice().sort((a, b) => b.startedAt - a.startedAt);
     const bmrPerDay = sorted[0].value;
     // Convertir kcal/día -> kcal del día (asumimos BMR válido para todo el día)
-    basalKcal = bmrPerDay;
+    // El BMR es kcal por DÍA COMPLETO. Si es hoy, solo se ha "gastado" la fracción
+    // transcurrida (si no, a las 10 am ya sumabas toda la basal del día).
+    const now = new Date();
+    const fraction = dayIso === todayISO()
+      ? (now.getHours() * 60 + now.getMinutes()) / 1440
+      : 1;
+    basalKcal = bmrPerDay * fraction;
   }
 
   if (activeKcal === 0 && basalKcal === 0) return null;
@@ -85,7 +97,7 @@ export async function readActiveCaloriesInRange(
   startMs: number,
   endMs: number
 ): Promise<number> {
-  const raw = await readHcRecords("ActiveCaloriesBurned", startMs, endMs);
+  const raw = await readHcRecords("ActiveCaloriesBurned", startMs, endMs, { pageSize: 5000 });
   const recs: HealthRecord[] = raw.map((r: any) => ({
     recordType: "ActiveCaloriesBurned",
     sourceApp: extractSourceApp(r),
@@ -95,6 +107,6 @@ export async function readActiveCaloriesInRange(
     unit: "kcal"
   }));
   if (recs.length === 0) return 0;
-  const { unique } = dedupeBySource(recs);
+  const { unique } = dedupeBySource(keepPrimarySource(recs));
   return sumAccumulables(unique).value;
 }

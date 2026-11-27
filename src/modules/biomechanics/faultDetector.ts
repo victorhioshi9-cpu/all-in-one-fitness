@@ -26,7 +26,14 @@ const FAULT_MESSAGES: Record<string, { message: string; severity: "warning" | "e
   CURL_ELBOW_FORWARD:   { message: "El codo avanza: mantenlo pegado al cuerpo", severity: "warning" },
   CURL_PARTIAL_TOP:     { message: "Rep incompleta arriba: extiende más el codo", severity: "warning" },
   // Press
-  PRESS_BACK_ARCH:      { message: "Arqueo lumbar: aprieta el core", severity: "error" }
+  PRESS_BACK_ARCH:      { message: "Arqueo lumbar: aprieta el core", severity: "error" },
+  // Códigos GENÉRICOS: son los que realmente devuelven los detectores de exercisePresets.ts
+  // (antes no tenían mensaje y el HUD mostraba el código crudo, p. ej. "TORSO_LEAN").
+  DEPTH_SHORT:          { message: "Profundidad corta: baja más", severity: "warning" },
+  KNEE_VALGUS:          { message: "Rodillas hacia dentro: empújalas hacia afuera", severity: "error" },
+  TORSO_LEAN:           { message: "Torso muy inclinado: pecho arriba, espalda neutra", severity: "warning" },
+  PARTIAL_TOP:          { message: "Extiende completo arriba", severity: "warning" },
+  BACK_ARCH:            { message: "Arqueo lumbar: aprieta el core", severity: "error" }
 };
 
 /** Mapea códigos a mensajes (exportado para el HUD). */

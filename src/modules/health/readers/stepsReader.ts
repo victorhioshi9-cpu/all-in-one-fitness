@@ -5,7 +5,7 @@
  * Mi Fitness suele escribir varios records parciales en el día que hay que sumar.
  */
 import { readHcRecords } from "../healthConnectClient";
-import { extractSourceApp, sumAccumulables, dedupeBySource } from "../sourceFilter";
+import { extractSourceApp, sumAccumulables, dedupeBySource, keepPrimarySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
 import { toLocalISO, parseLocalISO } from "@/modules/intelligence/dateUtils";
 
@@ -15,7 +15,8 @@ import { toLocalISO, parseLocalISO } from "@/modules/intelligence/dateUtils";
  */
 export async function readStepsForDay(dayIso: string): Promise<HealthRecord | null> {
   const { startMs, endMs } = dayRange(dayIso);
-  const raw = await readHcRecords("Steps", startMs, endMs);
+  // pageSize 5000: por defecto HC devuelve máx. 1000 records y Mi Fitness puede escribir uno por minuto.
+  const raw = await readHcRecords("Steps", startMs, endMs, { pageSize: 5000 });
 
   const records: HealthRecord[] = raw.map((r: any) => ({
     recordType: "Steps",
@@ -31,7 +32,7 @@ export async function readStepsForDay(dayIso: string): Promise<HealthRecord | nu
   if (records.length === 0) return null;
 
   // 1) Deduplica entre sources (Mi Fitness + Google Fit + Samsung Health)
-  const { unique } = dedupeBySource(records);
+  const { unique } = dedupeBySource(keepPrimarySource(records));
   // 2) Suma los parciales del mismo source
   return sumAccumulables(unique);
 }

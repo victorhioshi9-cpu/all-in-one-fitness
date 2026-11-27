@@ -114,3 +114,26 @@ export function extractSourceApp(rawRecord: any): string | undefined {
     undefined
   );
 }
+
+/**
+ * Evita contar dos veces los mismos pasos/kcal cuando varias apps escriben en
+ * Health Connect (reloj vía Mi Fitness + teléfono vía Google Fit, etc.).
+ * Antes dedupeBySource solo descartaba duplicados con el MISMO minuto de inicio;
+ * si las apps usaban ventanas distintas se sumaba todo.
+ *
+ * Regla: si hay datos de una fuente prioritaria (Mi Fitness) se usa SOLO esa;
+ * si no, se usa la fuente con mayor total (nunca se suman fuentes distintas).
+ */
+export function keepPrimarySource(records: HealthRecord[]): HealthRecord[] {
+  if (records.length === 0) return records;
+  const preferred = records.filter((r) => isPreferredSource(r.sourceApp));
+  if (preferred.length > 0) return preferred;
+  const totals = new Map<string, number>();
+  for (const r of records) {
+    const k = r.sourceApp ?? "unknown";
+    totals.set(k, (totals.get(k) ?? 0) + r.value);
+  }
+  let best = "unknown", max = -1;
+  for (const [k, v] of totals) if (v > max) { best = k; max = v; }
+  return records.filter((r) => (r.sourceApp ?? "unknown") === best);
+}
