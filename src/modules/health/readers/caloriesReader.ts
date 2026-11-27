@@ -36,7 +36,7 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     day: dayIso,
     startedAt: r.startTime,
     endedAt: r.endTime,
-    value: r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
+    value: r.energy?.value ?? r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
     unit: "kcal",
     rawMeta: r.metadata
   }));
@@ -51,7 +51,7 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     sourceApp: extractSourceApp(r),
     day: dayIso,
     startedAt: r.time,
-    value: r.basalMetabolicRate?.inCalories ?? r.basalMetabolicRate?.inKilocalories ?? 0,
+    value: r.basalMetabolicRate?.value ?? r.basalMetabolicRate?.inCalories ?? r.basalMetabolicRate?.inKilocalories ?? 0,
     unit: "kcal/day",
     rawMeta: r.metadata
   }));
@@ -90,7 +90,7 @@ export async function readActiveCaloriesInRange(
     sourceApp: extractSourceApp(r),
     startedAt: r.startTime,
     endedAt: r.endTime,
-    value: r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
+    value: r.energy?.value ?? r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
     unit: "kcal"
   }));
   if (recs.length === 0) return 0;

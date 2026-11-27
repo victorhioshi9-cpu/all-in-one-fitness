@@ -45,22 +45,29 @@ const STAGE_TO_FIELD: Record<string, keyof SleepSummary> = {
  * el día de "despertar" (hoy) pero abrimos la ventana desde ayer 18:00.
  */
 export async function readSleepForDay(wokeDayIso: string): Promise<SleepSummary | null> {
-  const wokeDay = new Date(`${wokeDayIso}T00:00:00Z`);
-  const startMs = wokeDay.getTime() - 6 * 3600_000; // ayer 18:00 UTC
-  const endMs = wokeDay.getTime() + 24 * 3600_000 - 1; // hoy 23:59 UTC
+  const [y, m, d] = wokeDayIso.split("-").map(Number);
+  const wokeDay = new Date(y, m - 1, d, 0, 0, 0, 0);
+  const startMs = wokeDay.getTime() - 6 * 3600_000; // ayer 18:00 local
+  const endMs = wokeDay.getTime() + 24 * 3600_000 - 1; // hoy 23:59 local
 
   const raw = await readHcRecords("SleepSession", startMs, endMs);
   if (raw.length === 0) return null;
 
-  // Aplanar a HealthRecord-like para dedupe
-  const recs: HealthRecord[] = raw.map((r: any) => ({
-    recordType: "SleepSession",
-    sourceApp: extractSourceApp(r),
-    startedAt: r.startTime,
-    endedAt: r.endTime,
-    value: r.endTime - r.startTime,
-    unit: "ms"
-  }));
+  // Aplanar a HealthRecord-like para dedupe.
+  // startTime/endTime en HC v3.2 son strings ISO, hay que parsearlas a ms.
+  const recs: HealthRecord[] = raw.map((r: any) => {
+    const startMsVal = new Date(r.startTime).getTime();
+    const endMsVal = new Date(r.endTime).getTime();
+    return {
+      recordType: "SleepSession",
+      sourceApp: extractSourceApp(r),
+      startedAt: startMsVal,
+      endedAt: endMsVal,
+      value: endMsVal - startMsVal,
+      unit: "ms",
+      rawMeta: r.metadata
+    };
+  });
   const { unique } = dedupeBySource(recs);
 
   if (unique.length === 0) return null;
@@ -69,7 +76,7 @@ export async function readSleepForDay(wokeDayIso: string): Promise<SleepSummary 
   const sorted = unique.slice().sort((a, b) => b.value - a.value);
   const main = sorted[0];
   const mainRaw = raw.find((r: any) =>
-    r.startTime === main.startedAt && r.endTime === main.endedAt
+    new Date(r.startTime).getTime() === main.startedAt && new Date(r.endTime).getTime() === main.endedAt
   );
 
   const summary: SleepSummary = {

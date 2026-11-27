@@ -64,7 +64,7 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
     sourceApp: extractSourceApp(r),
     startedAt: r.time,
     endedAt: r.time,
-    value: r.weight?.inKilograms ?? 0,
+    value: r.weight?.value ?? r.weight?.inKilograms ?? 0,
     unit: "kg",
     rawMeta: r.metadata
   }));
@@ -82,7 +82,7 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
     sourceApp: extractSourceApp(r),
     startedAt: r.time,
     endedAt: r.time,
-    value: r.height?.inMeters ?? 0,
+    value: r.height?.value ?? r.height?.inMeters ?? 0,
     unit: "m",
     rawMeta: r.metadata
   }));
@@ -101,21 +101,21 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   try {
     const rawLean = await readHcRecords("LeanBodyMass" as any, startMs, endMs);
     if (rawLean.length > 0) {
-      leanMass = rawLean[0].mass?.inKilograms ?? rawLean[0].leanBodyMass?.inKilograms;
+      leanMass = rawLean[0].mass?.value ?? rawLean[0].mass?.inKilograms ?? rawLean[0].leanBodyMass?.inKilograms;
     }
   } catch { /* tipo no soportado en esta versión de HC */ }
 
   try {
     const rawBone = await readHcRecords("BoneMass" as any, startMs, endMs);
     if (rawBone.length > 0) {
-      boneMass = rawBone[0].mass?.inKilograms;
+      boneMass = rawBone[0].mass?.value ?? rawBone[0].mass?.inKilograms;
     }
   } catch { /* tipo no soportado */ }
 
   try {
     const rawWater = await readHcRecords("BodyWaterMass" as any, startMs, endMs);
     if (rawWater.length > 0) {
-      waterMass = rawWater[0].mass?.inKilograms;
+      waterMass = rawWater[0].mass?.value ?? rawWater[0].mass?.inKilograms;
     }
   } catch { /* tipo no soportado */ }
 
