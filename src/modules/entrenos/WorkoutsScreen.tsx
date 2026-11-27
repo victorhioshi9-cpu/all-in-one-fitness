@@ -24,6 +24,7 @@ import { openDatabase, queryAsync } from "@/modules/persistence/db";
 import { PlateCalculator } from "./PlateCalculator";
 import { HIITTimer, RestTimer } from "./HIITTimer";
 import { MuscleHeatMap, PostWorkoutSummary } from "./PostWorkoutSummary";
+import { MuscleRecoveryCard } from "@/modules/muscles/MuscleRecoveryCard";
 import { computeDoubleProgression, suggestDeload } from "./doubleProgression";
 import {
   ROUTINES, ROUTINES_BY_DAY, DAYS_OF_WEEK, estimateRoutineMinutes,
@@ -384,7 +385,13 @@ export const WorkoutsScreen: React.FC = () => {
             {showTool === "plate" && <PlateCalculator />}
             {showTool === "hiit" && <HIITTimer />}
             {showTool === "rest" && <RestTimer suggestedSec={90} />}
-            {showTool === "heatmap" && <MuscleHeatMap />}
+            {showTool === "heatmap" && (
+              <>
+                <MuscleRecoveryCard />
+                <View style={{ height: spacing.md }} />
+                <MuscleHeatMap />
+              </>
+            )}
             {showTool === "summary" && selectedWorkoutId && (
               <PostWorkoutSummary workoutId={selectedWorkoutId} onClose={() => setShowTool(null)} />
             )}

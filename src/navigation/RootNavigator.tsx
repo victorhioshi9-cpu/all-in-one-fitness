@@ -1,6 +1,7 @@
 /**
  * RootNavigator.tsx (Rediseño v0.4) - Navegación completa.
- *   - Bottom tabs: Coach AI, Readiness, Salud, Entrenos, Nutrición
+ *   - Bottom tabs (v0.5): Inicio, Ejercicios, Coach AI (centro), Entrenos, Nutrición
+ *     (Readiness y Salud pasaron a pantallas de stack, accesibles desde Inicio y "Más")
  *   - Stack modal: Calendario, Periodización, Planificador comidas,
  *     Recomendaciones, Recordatorios, Datos (export), Mi perfil.
  *
@@ -27,6 +28,10 @@ import { RemindersScreen } from "@/modules/reminders/localNotifications";
 import { ProfileScreen } from "@/modules/profile/ProfileScreen";
 import { PlanScreen } from "@/modules/plan/PlanScreen";
 import { PhysiqueScreen } from "@/modules/physique/PhysiqueScreen";
+import { HomeScreen } from "@/modules/home/HomeScreen";
+import { ExerciseLibraryScreen } from "@/modules/library/ExerciseLibraryScreen";
+import { ExerciseDetailScreen } from "@/modules/library/ExerciseDetailScreen";
+import { Icon, type IconName } from "@/components/Icon";
 
 import { exportWorkoutAsJson, exportWorkoutAsCsv, exportFullBackupAsJson, exportTableAsCsv } from "@/modules/export/exportService";
 import { openDatabase, queryAsync } from "@/modules/persistence/db";
@@ -93,16 +98,18 @@ const ExportScreenImpl: React.FC = () => {
 };
 
 const TabBarMoreScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
-  const items = [
-    { label: "Mi perfil", target: "Profile", emoji: "👤" },
-    { label: "Mi plan", target: "Plan", emoji: "🎯" },
-    { label: "Análisis físico (foto)", target: "Physique", emoji: "📸" },
-    { label: "Calendario", target: "Calendar", emoji: "📅" },
-    { label: "Periodización", target: "Periodization", emoji: "🎯" },
-    { label: "Plan de comidas", target: "MealPlanner", emoji: "🍽" },
-    { label: "Recomendaciones", target: "Recommendations", emoji: "💡" },
-    { label: "Recordatorios", target: "Reminders", emoji: "⏰" },
-    { label: "Exportar datos", target: "Export", emoji: "📤" }
+  const items: { label: string; target: string; icon: IconName }[] = [
+    { label: "Mi perfil", target: "Profile", icon: "person-outline" },
+    { label: "Mi plan", target: "Plan", icon: "flag-outline" },
+    { label: "Readiness", target: "Readiness", icon: "pulse-outline" },
+    { label: "Salud y wearables", target: "Health", icon: "heart-outline" },
+    { label: "Análisis físico (foto)", target: "Physique", icon: "image-outline" },
+    { label: "Calendario", target: "Calendar", icon: "calendar-outline" },
+    { label: "Periodización", target: "Periodization", icon: "stats-chart-outline" },
+    { label: "Plan de comidas", target: "MealPlanner", icon: "restaurant-outline" },
+    { label: "Recomendaciones", target: "Recommendations", icon: "bulb-outline" },
+    { label: "Recordatorios", target: "Reminders", icon: "alarm-outline" },
+    { label: "Exportar datos", target: "Export", icon: "download-outline" }
   ];
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg, padding: spacing.lg }}>
@@ -113,8 +120,11 @@ const TabBarMoreScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
           style={{ backgroundColor: colors.bgCard, paddingVertical: spacing.lg, paddingHorizontal: spacing.md, borderRadius: 10, marginBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 1, borderColor: colors.dim }}
           onPress={() => navigation.navigate(item.target)}
         >
-          <Text style={{ fontSize: 20 }}>{item.emoji}</Text>
-          <Text style={{ color: colors.bright, fontSize: 16, fontWeight: "700" }}>{item.label}</Text>
+          <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: colors.accentDim, alignItems: "center", justifyContent: "center" }}>
+            <Icon name={item.icon} size={20} color={colors.accent} />
+          </View>
+          <Text style={{ color: colors.bright, fontSize: 16, fontWeight: "700", flex: 1 }}>{item.label}</Text>
+          <Icon name="chevron-forward" size={18} color={colors.textDim} />
         </Pressable>
       ))}
     </ScrollView>
@@ -130,42 +140,98 @@ export const RootNavigator: React.FC = () => {
       <Stack.Screen name="Main">
         {() => (
           <Tab.Navigator
+            initialRouteName="Home"
             screenOptions={({ navigation }) => ({
               headerShown: true,
-              headerStyle: { backgroundColor: colors.bg, borderBottomColor: colors.dim, borderBottomWidth: 1 },
+              headerStyle: { backgroundColor: colors.bg },
+              headerShadowVisible: false,
               headerTintColor: colors.bright,
               headerTitleStyle: { fontWeight: "800", fontSize: 18 },
               headerTitleAlign: "left",
               headerRight: () => (
                 <Pressable
                   onPress={() => navigation.navigate("More")}
-                  style={{ marginRight: spacing.md, paddingHorizontal: spacing.sm, paddingVertical: 4 }}
+                  style={{ marginRight: spacing.md }}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                 >
-                  <Text style={{ color: colors.accent, fontWeight: "800", fontSize: 16 }}>Más ☰</Text>
+                  <Icon name="ellipsis-horizontal-circle-outline" size={26} color={colors.accent} />
                 </Pressable>
               ),
               tabBarActiveTintColor: colors.accent,
               tabBarInactiveTintColor: colors.textMuted,
               tabBarStyle: {
                 backgroundColor: colors.bg,
-                borderTopColor: colors.dim,
+                borderTopColor: colors.line,
                 borderTopWidth: 1,
-                height: 64,
-                paddingBottom: 8
+                height: 68,
+                paddingBottom: 10,
+                paddingTop: 6
               },
               tabBarLabelStyle: { fontWeight: "700", fontSize: 11 }
             })}
           >
-            <Tab.Screen name="Coach" component={CameraScreen} options={{ tabBarLabel: "Coach", headerTitle: "Coach AI" }} />
-            <Tab.Screen name="Readiness" component={ReadinessScreen} options={{ tabBarLabel: "Readiness", headerTitle: "Readiness" }} />
-            <Tab.Screen name="Health" component={HealthConnectScreen} options={{ tabBarLabel: "Salud", headerTitle: "Salud & Wearables" }} />
-            <Tab.Screen name="Workouts" component={WorkoutsScreen} options={{ tabBarLabel: "Entrenos", headerTitle: "Entrenos" }} />
-            <Tab.Screen name="Nutrition" component={NutritionScreen} options={{ tabBarLabel: "Nutrición", headerTitle: "Nutrición" }} />
+            <Tab.Screen
+              name="Home"
+              component={HomeScreen}
+              options={{
+                tabBarLabel: "Inicio",
+                headerShown: false,
+                tabBarIcon: ({ color, focused }) => <Icon name={focused ? "home" : "home-outline"} size={23} color={color} />
+              }}
+            />
+            <Tab.Screen
+              name="Library"
+              component={ExerciseLibraryScreen}
+              options={{
+                tabBarLabel: "Ejercicios",
+                headerShown: false,
+                tabBarIcon: ({ color, focused }) => <Icon name={focused ? "body" : "body-outline"} size={23} color={color} />
+              }}
+            />
+            <Tab.Screen
+              name="Coach"
+              component={CameraScreen}
+              options={{
+                tabBarLabel: "Coach",
+                headerTitle: "Coach AI",
+                tabBarIcon: ({ focused }) => (
+                  <View
+                    style={{
+                      width: 46, height: 46, borderRadius: 23, marginTop: -14,
+                      backgroundColor: colors.accent, alignItems: "center", justifyContent: "center",
+                      borderWidth: 3, borderColor: colors.bg, opacity: focused ? 1 : 0.92
+                    }}
+                  >
+                    <Icon name="camera" size={22} color="#08080c" />
+                  </View>
+                )
+              }}
+            />
+            <Tab.Screen
+              name="Workouts"
+              component={WorkoutsScreen}
+              options={{
+                tabBarLabel: "Entrenos",
+                headerTitle: "Entrenos",
+                tabBarIcon: ({ color, focused }) => <Icon name={focused ? "barbell" : "barbell-outline"} size={23} color={color} />
+              }}
+            />
+            <Tab.Screen
+              name="Nutrition"
+              component={NutritionScreen}
+              options={{
+                tabBarLabel: "Nutrición",
+                headerTitle: "Nutrición",
+                tabBarIcon: ({ color, focused }) => <Icon name={focused ? "nutrition" : "nutrition-outline"} size={23} color={color} />
+              }}
+            />
           </Tab.Navigator>
         )}
       </Stack.Screen>
       <Stack.Screen name="More" component={TabBarMoreScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Más" }} />
+      <Stack.Screen name="ExerciseDetail" component={ExerciseDetailScreen} options={{ headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerShadowVisible: false, headerTitle: "Ejercicio" }} />
+      <Stack.Screen name="Readiness" component={ReadinessScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Readiness" }} />
+      <Stack.Screen name="Health" component={HealthConnectScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Salud & Wearables" }} />
       <Stack.Screen name="Profile" component={ProfileScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Mi perfil" }} />
       <Stack.Screen name="Plan" component={PlanScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Mi plan" }} />
       <Stack.Screen name="Physique" component={PhysiqueScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Análisis físico" }} />

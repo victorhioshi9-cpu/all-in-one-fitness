@@ -17,7 +17,7 @@ import {
   ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState, Switch, Vibration
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, useRoute } from "@react-navigation/native";
 import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
@@ -304,6 +304,17 @@ export const CameraScreen: React.FC = () => {
     setSetNumber(1);
     setMode("tracking");
   };
+
+  // --- Lanzado desde la biblioteca: navigate("Main", { screen: "Coach", params: { exerciseId, nonce } }) ---
+  const route = useRoute<any>();
+  const launchExerciseId: string | undefined = route.params?.exerciseId;
+  const launchNonce: number | undefined = route.params?.nonce;
+  useEffect(() => {
+    if (launchExerciseId && EXERCISE_PRESETS[launchExerciseId]) {
+      selectExercise(EXERCISE_PRESETS[launchExerciseId]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchExerciseId, launchNonce]);
 
   // --- Filtrar ejercicios por búsqueda ---
   const filteredExercises = useMemo(() => {

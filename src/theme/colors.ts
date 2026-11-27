@@ -50,7 +50,35 @@ export const colors = {
   catSupp: "#06b6d4",      // 💊 Suplementos
   catDish: "#f97316",      // 🍽 Platillos
   catDrink: "#8b5cf6",     // 🥤 Bebidas
-  catCombo: "#ec4899"      // ⭐ Combos
+  catCombo: "#ec4899",     // ⭐ Combos
+
+  // --- Cuerpo / músculos (BodyMap) ---
+  muscleIdle: "#2e2e42",
+  muscleSecondary: "rgba(255,107,53,0.42)",
+  silhouette: "#1b1b2a",
+  line: "rgba(255,255,255,0.07)"   // bordes sutiles de tarjetas
+} as const;
+
+/** Escala tipográfica (Rediseño v0.5). */
+export const type = {
+  display: { fontSize: 34, fontWeight: "800" as const, letterSpacing: -0.5 },
+  title: { fontSize: 24, fontWeight: "800" as const, letterSpacing: -0.3 },
+  heading: { fontSize: 17, fontWeight: "700" as const },
+  body: { fontSize: 14, fontWeight: "500" as const },
+  caption: { fontSize: 12, fontWeight: "600" as const },
+  overline: { fontSize: 11, fontWeight: "800" as const, letterSpacing: 1.2 },
+  metric: { fontSize: 28, fontWeight: "800" as const, letterSpacing: -0.5 }
+};
+
+/** Sombra suave para tarjetas elevadas. */
+export const shadow = {
+  card: {
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6
+  }
 } as const;
 
 export const spacing = {
