@@ -76,11 +76,11 @@ const mirrorIdx = (i: number) => (i >= 11 ? (i % 2 === 1 ? i + 1 : i - 1) : i);
 // ---------------------------------------------------------------------------
 // Parámetros (ajustables)
 // ---------------------------------------------------------------------------
-const START_FRAC = 0.2;      // empieza el movimiento al recorrer 20% del ROM
-const COUNT_FRAC = 0.4;      // cuenta la rep si llegó al 40% del ROM
-const RETURN_FRAC = 0.15;    // vuelve a "arriba" a menos del 15% del ROM
-const MIN_RANGE_DEG = 25;    // por debajo: ejercicio isométrico, sin conteo
-const MIN_REP_GAP_MS = 350;  // anti doble conteo
+const START_FRAC = 0.35;     // empieza el movimiento al recorrer 35% del ROM (antes 20%)
+const COUNT_FRAC = 0.6;      // cuenta la rep si llegó al 60% del ROM (antes 40%)
+const RETURN_FRAC = 0.2;     // vuelve a "arriba" a menos del 20% del ROM (antes 15%)
+const MIN_RANGE_DEG = 35;    // por debajo: ejercicio isométrico, sin conteo (antes 25)
+const MIN_REP_GAP_MS = 600;  // anti doble conteo (antes 350ms)
 const GOOD_AFTER_FRAMES = 8;
 const BAD_AFTER_FRAMES = 5;
 const LOST_AFTER_FRAMES = 15;

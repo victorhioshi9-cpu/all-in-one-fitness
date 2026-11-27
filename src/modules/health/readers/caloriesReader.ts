@@ -19,6 +19,17 @@ import { todayISO } from "@/modules/intelligence/dateUtils";
 // TypeError y la pantalla mostraba "—" en kcal. normalizeRecord ya entrega ms, así que
 // basta este helper tolerante.
 const toMs = (v: any): number => (typeof v === "number" ? v : new Date(v).getTime());
+
+/** Convierte un objeto Energy de HC v3.2 a kcal. */
+function energyToKcal(e: any): number {
+  if (!e) return 0;
+  const val = typeof e.value === "number" ? e.value : 0;
+  const unit = e.unit ?? "";
+  if (unit === "calories") return val / 1000;
+  if (unit === "joules") return val / 4184;
+  if (unit === "kilojoules") return val / 4.184;
+  return val; // kilocalories o desconocido
+}
 import { dayRange } from "./stepsReader";
 
 export interface DailyCalories {
@@ -43,7 +54,7 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     day: dayIso,
     startedAt: toMs(r.startTime),
     endedAt: toMs(r.endTime),
-    value: r.energy?.value ?? r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
+    value: energyToKcal(r.energy),
     unit: "kcal",
     rawMeta: r.metadata
   }));
@@ -103,7 +114,7 @@ export async function readActiveCaloriesInRange(
     sourceApp: extractSourceApp(r),
     startedAt: toMs(r.startTime),
     endedAt: toMs(r.endTime),
-    value: r.energy?.value ?? r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
+    value: energyToKcal(r.energy),
     unit: "kcal"
   }));
   if (recs.length === 0) return 0;
