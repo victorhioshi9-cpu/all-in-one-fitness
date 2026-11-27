@@ -14,7 +14,7 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions,
-  ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState, Switch
+  ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState, Switch, Vibration
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
 import { useIsFocused } from "@react-navigation/native";
@@ -147,6 +147,12 @@ export const CameraScreen: React.FC = () => {
   // Objetivo editable: reps + meta de entrenamiento (define el descanso sugerido).
   const [goal, setGoal] = useState<TrainingGoal>("hypertrophy");
   const [goalOpen, setGoalOpen] = useState(false);
+  // --- Descanso entre series ---
+  // Mientras se descansa se APAGA la cámara y la detección de pose (no hay
+  // movimiento que contar, ahorra batería y evita falsos conteos).
+  const [resting, setResting] = useState(false);
+  const [restLeft, setRestLeft] = useState(0);
+  const [setNumber, setSetNumber] = useState(1);
   const engineRef = useRef<LiveFormEngine | null>(null);
   const [live, setLive] = useState<LiveSnapshot>(EMPTY_SNAPSHOT);
   const [searchQuery, setSearchQuery] = useState("");
@@ -206,17 +212,17 @@ export const CameraScreen: React.FC = () => {
   // Si se activa y la app crashea, sabremos que el problema es el plugin nativo.
   // --- Pose detection con Google ML Kit ---
   // Hook se llama SIEMPRE (reglas de hooks). El parámetro 'active' controla.
-  const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking" && isFocused && appActive);
+  const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking" && isFocused && appActive && !resting);
 
   // --- Motor en vivo: cuenta reps del EJERCICIO SELECCIONADO + evalúa la técnica ---
   // (reemplaza la heurística anterior de altura de cadera, que era igual para todos
   // los ejercicios y no servía para curl, press, remo, etc.)
   useEffect(() => {
-    if (mode !== "tracking" || !engineRef.current) return;
+    if (mode !== "tracking" || !engineRef.current || resting) return;
     const snap = engineRef.current.update(pose && pose._hasData ? (pose as any) : null, Date.now());
     setCount(snap.count);
     setLive(snap);
-  }, [pose, mode]);
+  }, [pose, mode, resting]);
 
   const adjustCount = (delta: number) => {
     const next = Math.max(0, count + delta);
@@ -232,6 +238,33 @@ export const CameraScreen: React.FC = () => {
 
   const goalReached = live.supportsReps && targetReps > 0 && count >= targetReps;
   const restSeconds = recommendRestSeconds(goal, isCompound(preset), live.partialCount >= 2);
+
+  const startRest = () => {
+    setRestLeft(restSeconds);
+    setResting(true);
+  };
+
+  const endRest = () => {
+    setResting(false);
+    setSetNumber((n) => n + 1);
+    newSet();           // reset() desarma el motor: hay que volver a la posición inicial
+    Vibration.vibrate([0, 250, 120, 250]);
+  };
+
+  // Al cumplir el objetivo de reps se entra solo en descanso.
+  useEffect(() => {
+    if (goalReached && !resting && mode === "tracking") startRest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goalReached]);
+
+  // Cuenta atrás del descanso.
+  useEffect(() => {
+    if (!resting) return;
+    if (restLeft <= 0) { endRest(); return; }
+    const t = setTimeout(() => setRestLeft((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resting, restLeft]);
 
   // --- Manejador de permiso de cámara ---
   const handleRequestCameraPermission = async () => {
@@ -267,6 +300,8 @@ export const CameraScreen: React.FC = () => {
     setCount(0);
     setLive(EMPTY_SNAPSHOT);
     setGoalOpen(false);
+    setResting(false);
+    setSetNumber(1);
     setMode("tracking");
   };
 
@@ -447,23 +482,30 @@ export const CameraScreen: React.FC = () => {
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={mode === "tracking" && isFocused && appActive}
+        isActive={mode === "tracking" && isFocused && appActive && !resting}
         resizeMode="cover"
         onError={handleCameraError}
         photo={false}
         video={false}
         audio={false}
-        frameProcessor={frameProcessor}
+        frameProcessor={resting ? undefined : frameProcessor}
       />
 
       {/* Overlay de puntos del esqueleto */}
-      {pose && pose._hasData ? (
+      {!resting && pose && pose._hasData ? (
         <SkeletonPoints pose={pose} width={box.w} height={box.h} mirror={cameraPosition === "front"} />
       ) : null}
 
       {/* Estado de pose: SOLO aparece si hay un problema (cuerpo perdido / FPS bajos).
           Con el cuerpo detectado y fluido no se muestra, y al cumplir el objetivo desaparece. */}
-      {!goalReached && (!live.bodyVisible || (fps > 0 && fps < 12)) && (
+      {!resting && live.bodyVisible && live.supportsReps && !live.armed && (
+        <View style={styles.poseStatus} pointerEvents="none">
+          <Text style={styles.poseStatusInfo}>
+            Colócate en la posición inicial y quédate quieto para empezar
+          </Text>
+        </View>
+      )}
+      {!resting && !goalReached && (!live.bodyVisible || (fps > 0 && fps < 12)) && (
         <View style={styles.poseStatus} pointerEvents="none">
           {poseAvailable ? (
             <Text style={styles.poseStatusWarn}>
@@ -477,21 +519,37 @@ export const CameraScreen: React.FC = () => {
 
       {/* Cuadro de técnica (transparente): verde = bien · rojo = corrige · neutro = guía.
           Al cumplir el objetivo se sustituye por el descanso recomendado. */}
-      {goalReached ? (
-        <View style={styles.restBox} pointerEvents="none">
-          <Text style={styles.restTitle}>✅ Objetivo cumplido</Text>
-          <Text style={styles.restText}>
-            Descansa ~{formatRest(restSeconds)} ({GOAL_META[goal].label.toLowerCase()})
-            {live.partialCount > 0 ? ` · ${live.partialCount} rep(s) parcial(es)` : ""}
-          </Text>
-        </View>
-      ) : (
+      {resting ? null : (
         <FormGuideBox
           state={live.formState}
           message={live.message}
           exerciseName={preset.name}
           hint={preset.calibrationHint}
         />
+      )}
+
+      {/* Pantalla de descanso: cámara y detección apagadas */}
+      {resting && (
+        <View style={styles.restOverlay}>
+          <Text style={styles.restOverlayTitle}>😮‍💨 Descanso</Text>
+          <Text style={styles.restOverlayTime}>{formatRest(Math.max(0, restLeft))}</Text>
+          <Text style={styles.restOverlayHint}>
+            Serie {setNumber} completada · {count} rep{count === 1 ? "" : "s"}
+            {live.partialCount > 0 ? ` (${live.partialCount} parcial${live.partialCount === 1 ? "" : "es"})` : ""}
+            {"\n"}Cámara en pausa: no se detecta movimiento mientras descansas.
+          </Text>
+          <View style={styles.restRow}>
+            <Pressable style={styles.restBtn} onPress={() => setRestLeft((n) => Math.max(5, n - 15))}>
+              <Text style={styles.restBtnText}>−15 s</Text>
+            </Pressable>
+            <Pressable style={styles.restBtn} onPress={() => setRestLeft((n) => n + 15)}>
+              <Text style={styles.restBtnText}>+15 s</Text>
+            </Pressable>
+          </View>
+          <Pressable style={[styles.restBtn, styles.restBtnPrimary]} onPress={endRest}>
+            <Text style={[styles.restBtnText, { color: colors.bg }]}>Saltar descanso · Serie {setNumber + 1}</Text>
+          </Pressable>
+        </View>
       )}
 
       {/* HUD mínimo */}
@@ -568,10 +626,10 @@ export const CameraScreen: React.FC = () => {
           <Text style={styles.hudStatValue}>{targetReps}</Text>
           <Text style={styles.hudStatUnit}>{GOAL_META[goal].label}</Text>
         </Pressable>
-        {goalReached && (
-          <Pressable style={[styles.hudStat, { backgroundColor: colors.accent }]} onPress={newSet}>
-            <Text style={[styles.hudStatLabel, { color: colors.bg }]}>Nueva</Text>
-            <Text style={[styles.hudStatValue, { color: colors.bg, fontSize: 18 }]}>serie</Text>
+        {!resting && (
+          <Pressable style={[styles.hudStat, { backgroundColor: colors.accent }]} onPress={count > 0 ? startRest : newSet}>
+            <Text style={[styles.hudStatLabel, { color: colors.bg }]}>{count > 0 ? "Terminar" : "Reiniciar"}</Text>
+            <Text style={[styles.hudStatValue, { color: colors.bg, fontSize: 18 }]}>{count > 0 ? "→ descanso" : "serie"}</Text>
           </Pressable>
         )}
       </View>
@@ -676,6 +734,17 @@ const styles = StyleSheet.create({
     position: "absolute", top: 100, left: 12, right: 12, padding: 12, borderRadius: 12,
     borderWidth: 2, borderColor: "#22c55e", backgroundColor: "rgba(34,197,94,0.18)"
   },
+  restOverlay: {
+    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: "rgba(8,10,14,0.97)", alignItems: "center", justifyContent: "center", padding: spacing.lg
+  },
+  restOverlayTitle: { color: "#fff", fontSize: 22, fontWeight: "800", marginBottom: spacing.sm },
+  restOverlayTime: { color: colors.accent, fontSize: 64, fontWeight: "900", marginBottom: spacing.sm },
+  restOverlayHint: { color: colors.textMuted, fontSize: 13, textAlign: "center", lineHeight: 19, marginBottom: spacing.lg },
+  restRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.md },
+  restBtn: { backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.dim },
+  restBtnPrimary: { backgroundColor: colors.accent, borderColor: colors.accent },
+  restBtnText: { color: colors.bright, fontWeight: "800", fontSize: 14 },
   restTitle: { color: "#fff", fontSize: 16, fontWeight: "800" },
   restText: { color: "#fff", fontSize: 13, marginTop: 4 },
 

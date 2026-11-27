@@ -16,7 +16,22 @@ export type RecordType =
   | "Height"
   | "HeartRateVariabilityRmssd"
   | "Hydration"
-  | "ExerciseSession";  // para escribir nuestras sesiones de entrenamiento
+  | "ExerciseSession";
+
+/** Nombre legible de cada tipo (para mostrar qué permiso falta). */
+export const RECORD_LABEL: Record<string, string> = {
+  Steps: "Pasos",
+  HeartRate: "Frecuencia cardíaca",
+  ActiveCaloriesBurned: "Calorías activas",
+  BasalMetabolicRate: "Metabolismo basal",
+  SleepSession: "Sueño",
+  Weight: "Peso",
+  BodyFat: "% Grasa corporal",
+  Height: "Estatura",
+  HeartRateVariabilityRmssd: "Variabilidad cardíaca (HRV)",
+  Hydration: "Hidratación",
+  ExerciseSession: "Sesiones de ejercicio"
+};  // para escribir nuestras sesiones de entrenamiento
 
 /**
  * Tipos que pedimos leer. Mi Fitness (com.xiaomi.wearable) escribe la mayoría
@@ -55,7 +70,8 @@ export const WRITE_PERMISSIONS: RecordType[] = [
  */
 export const PREFERRED_SOURCES = [
   "com.xiaomi.wearable",     // Mi Fitness / Xiaomi Watch
-  "com.xiaomi.hm.health",    // versión antigua de Mi Fit
+  "com.xiaomi.hm.health",    // versión antigua de Mi Fit / Zepp Life
+  "com.mi.health",           // Xiaomi Health (variante global de Mi Fitness)
   "com.google.android.apps.fitness",  // Google Fit (fallback)
   "com.samsung.android.shealth"        // Samsung Health (fallback)
 ];
@@ -63,7 +79,7 @@ export const PREFERRED_SOURCES = [
 /** ¿Es este source uno de los prioritarios (Mi Fitness)? */
 export function isPreferredSource(appId: string | undefined): boolean {
   if (!appId) return false;
-  return PREFERRED_SOURCES.slice(0, 2).includes(appId);
+  return PREFERRED_SOURCES.slice(0, 3).includes(appId);
 }
 
 export interface HealthRecord {

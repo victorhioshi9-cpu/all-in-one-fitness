@@ -137,3 +137,24 @@ export function keepPrimarySource(records: HealthRecord[]): HealthRecord[] {
   for (const [k, v] of totals) if (v > max) { best = k; max = v; }
   return records.filter((r) => (r.sourceApp ?? "unknown") === best);
 }
+
+/**
+ * Elimina SOLO duplicados exactos (mismo source, mismo intervalo y mismo valor).
+ *
+ * BUG CORREGIDO (pasos 9916 vs 9958 del reloj): para pasos/kcal se usaba
+ * dedupeBySource, que agrupa por minuto de inicio SIN mirar el source y se queda
+ * con UN solo record por minuto. Si Mi Fitness escribía dos records legítimos
+ * que empiezan en el mismo minuto, uno se descartaba y el total salía menor.
+ * Para métricas acumulables hay que sumar todo salvo duplicados exactos.
+ */
+export function dedupeExact(records: HealthRecord[]): HealthRecord[] {
+  const seen = new Set<string>();
+  const out: HealthRecord[] = [];
+  for (const r of records) {
+    const key = `${r.sourceApp ?? ""}|${r.startedAt}|${r.endedAt ?? ""}|${r.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}

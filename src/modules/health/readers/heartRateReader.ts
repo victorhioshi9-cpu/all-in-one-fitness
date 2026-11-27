@@ -17,6 +17,7 @@
  */
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, averageHeartRate, dedupeBySource } from "../sourceFilter";
+import { isPreferredSource } from "../types";
 import type { HealthRecord } from "../types";
 import { dayRange } from "./stepsReader";
 
@@ -46,6 +47,48 @@ export async function readHeartRateSamplesForDay(dayIso: string): Promise<HrSamp
     }
   }
   return samples.sort((a, b) => a.ts - b.ts);
+}
+
+export interface HeartRateSummary {
+  /** Última muestra registrada (lo que marca el reloj "ahora"). */
+  latestBpm: number;
+  latestAt: number;
+  avgBpm: number;
+  minBpm: number;
+  maxBpm: number;
+  /** Reposo estimado (percentil bajo de la mañana). */
+  restingBpm: number | null;
+  samples: number;
+}
+
+/**
+ * Resumen del día: FC ACTUAL (última muestra), media, mín, máx y reposo.
+ *
+ * Antes la app mostraba solo la FC en reposo (p. ej. 58 bpm) en la tarjeta de
+ * frecuencia cardíaca, que no coincide con lo que se ve en el reloj en este
+ * momento. Ahora la tarjeta principal es la última muestra y el reposo va aparte.
+ * Si hay muestras de Mi Fitness se usan solo esas (no se mezcla con el teléfono).
+ */
+export async function readHeartRateSummary(dayIso: string): Promise<HeartRateSummary | null> {
+  let samples = (await readHeartRateSamplesForDay(dayIso)).filter((s) => s.bpm >= 30 && s.bpm <= 230);
+  if (samples.length === 0) return null;
+
+  const preferred = samples.filter((s) => isPreferredSource(s.sourceApp));
+  if (preferred.length > 0) samples = preferred;
+
+  const latest = samples[samples.length - 1]; // ya vienen ordenadas por ts
+  const bpms = samples.map((s) => s.bpm);
+  const avg = Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length);
+
+  return {
+    latestBpm: Math.round(latest.bpm),
+    latestAt: latest.ts,
+    avgBpm: avg,
+    minBpm: Math.min(...bpms),
+    maxBpm: Math.max(...bpms),
+    restingBpm: await readRestingHeartRate(dayIso),
+    samples: samples.length
+  };
 }
 
 /**

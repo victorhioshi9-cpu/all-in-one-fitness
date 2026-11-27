@@ -23,6 +23,7 @@ export interface FoodRow {
   fiber_g: number;
   is_supplement: number;
   is_combo: number;
+  combo_items?: string | null;
 }
 
 const uid = () => `food_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;

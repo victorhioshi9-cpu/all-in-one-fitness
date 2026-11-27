@@ -15,9 +15,10 @@ import {
   View, Text, StyleSheet, Pressable, ScrollView, Modal
 } from "react-native";
 import { colors, spacing, radius } from "@/theme/colors";
+import { useNavigation } from "@react-navigation/native";
 import {
   useSettingsStore, computeTargets,
-  type Gender, type Goal, type ActivityLevel
+  type Gender, type Goal, type ActivityLevel, type Experience
 } from "@/store/settingsStore";
 
 const ACTIVITY_LABEL: Record<ActivityLevel, string> = {
@@ -29,9 +30,16 @@ const ACTIVITY_LABEL: Record<ActivityLevel, string> = {
 };
 
 const GOAL_LABEL: Record<Goal, string> = {
-  lose: "Perder grasa",
+  lose: "Perder grasa / peso",
   maintain: "Mantener",
-  gain: "Ganar músculo"
+  gain: "Ganar peso",
+  hypertrophy: "Hipertrofia (ganar músculo)"
+};
+
+const EXPERIENCE_LABEL: Record<Experience, string> = {
+  beginner: "Principiante",
+  intermediate: "Intermedio",
+  advanced: "Avanzado"
 };
 
 const GENDER_LABEL: Record<Gender, string> = {
@@ -41,6 +49,7 @@ const GENDER_LABEL: Record<Gender, string> = {
 
 export const ProfileScreen: React.FC = () => {
   const store = useSettingsStore();
+  const navigation = useNavigation<any>();
   const [editing, setEditing] = useState(false);
 
   // Estado local de edición
@@ -50,6 +59,9 @@ export const ProfileScreen: React.FC = () => {
   const [draftWeight, setDraftWeight] = useState<number>(store.weightKg ?? 70);
   const [draftActivity, setDraftActivity] = useState<ActivityLevel | null>(store.activityLevel);
   const [draftGoal, setDraftGoal] = useState<Goal | null>(store.goal);
+  const [draftExperience, setDraftExperience] = useState<Experience>(store.experience ?? "intermediate");
+  // % grasa manual (opcional): null = sin dato, se usa el de la báscula si existe.
+  const [draftBodyFat, setDraftBodyFat] = useState<number | null>(store.bodyFatManualPct ?? null);
 
   const bmi = computeBmi(store.heightCm, store.weightKg);
   const idealRange = computeIdealWeightRange(store.heightCm);
@@ -67,6 +79,8 @@ export const ProfileScreen: React.FC = () => {
     setDraftWeight(store.weightKg ?? 70);
     setDraftActivity(store.activityLevel);
     setDraftGoal(store.goal);
+    setDraftExperience(store.experience ?? "intermediate");
+    setDraftBodyFat(store.bodyFatManualPct ?? null);
     setEditing(true);
   };
 
@@ -74,7 +88,8 @@ export const ProfileScreen: React.FC = () => {
     if (!draftGender || !draftActivity || !draftGoal) return;
     store.setOnboardingData({
       heightCm: draftHeight, weightKg: draftWeight, ageYears: draftAge,
-      gender: draftGender, goal: draftGoal, activityLevel: draftActivity
+      gender: draftGender, goal: draftGoal, activityLevel: draftActivity,
+      experience: draftExperience, bodyFatManualPct: draftBodyFat
     });
     setEditing(false);
   };
@@ -112,7 +127,19 @@ export const ProfileScreen: React.FC = () => {
         <ProfileRow label="Actividad" value={store.activityLevel ? ACTIVITY_LABEL[store.activityLevel] : "—"} emoji="🏃" />
         <Divider />
         <ProfileRow label="Objetivo" value={store.goal ? GOAL_LABEL[store.goal] : "—"} emoji="🎯" />
+        <Divider />
+        <ProfileRow label="Experiencia" value={store.experience ? EXPERIENCE_LABEL[store.experience] : "—"} emoji="🏋️" />
+        <Divider />
+        <ProfileRow label="% Grasa (manual)" value={store.bodyFatManualPct ? `${store.bodyFatManualPct}%` : "—"} emoji="📏" />
       </View>
+
+      {/* Acceso directo al plan generado con estos datos */}
+      <Pressable style={styles.saveBtn} onPress={() => navigation.navigate("Plan")}>
+        <Text style={styles.saveBtnText}>🎯 Ver mi plan personalizado</Text>
+      </Pressable>
+      <Pressable style={[styles.saveBtn, { marginTop: spacing.sm }]} onPress={() => navigation.navigate("Physique")}>
+        <Text style={styles.saveBtnText}>📸 Análisis físico con foto</Text>
+      </Pressable>
 
       {/* Métricas calculadas */}
       <Text style={styles.sectionTitle}>Métricas calculadas</Text>
@@ -210,11 +237,36 @@ export const ProfileScreen: React.FC = () => {
 
           {/* Objetivo */}
           <Text style={styles.sectionTitle}>Objetivo</Text>
-          <View style={styles.row3}>
-            <ChoiceCard label="Perder" emoji="🔥" active={draftGoal === "lose"} onPress={() => setDraftGoal("lose")} />
+          <View style={styles.row2}>
+            <ChoiceCard label="Perder grasa" emoji="🔥" active={draftGoal === "lose"} onPress={() => setDraftGoal("lose")} />
             <ChoiceCard label="Mantener" emoji="⚖️" active={draftGoal === "maintain"} onPress={() => setDraftGoal("maintain")} />
-            <ChoiceCard label="Ganar" emoji="💪" active={draftGoal === "gain"} onPress={() => setDraftGoal("gain")} />
           </View>
+          <View style={[styles.row2, { marginTop: spacing.sm }]}>
+            <ChoiceCard label="Ganar peso" emoji="🍚" active={draftGoal === "gain"} onPress={() => setDraftGoal("gain")} />
+            <ChoiceCard label="Hipertrofia" emoji="💪" active={draftGoal === "hypertrophy"} onPress={() => setDraftGoal("hypertrophy")} />
+          </View>
+
+          {/* Experiencia */}
+          <Text style={styles.sectionTitle}>Experiencia entrenando</Text>
+          <View style={styles.row3}>
+            <ChoiceCard label="Principiante" emoji="🌱" active={draftExperience === "beginner"} onPress={() => setDraftExperience("beginner")} />
+            <ChoiceCard label="Intermedio" emoji="⚡" active={draftExperience === "intermediate"} onPress={() => setDraftExperience("intermediate")} />
+            <ChoiceCard label="Avanzado" emoji="🔥" active={draftExperience === "advanced"} onPress={() => setDraftExperience("advanced")} />
+          </View>
+
+          {/* % grasa manual (opcional) */}
+          <Text style={styles.sectionTitle}>% Grasa corporal (opcional)</Text>
+          <EditStepper label="% grasa" unit={draftBodyFat === null ? "sin dato (se usa el de la báscula)" : "%"}
+            value={draftBodyFat ?? 0}
+            onDec={() => setDraftBodyFat(Math.max(3, +((draftBodyFat ?? 20) - 0.5).toFixed(1)))}
+            onInc={() => setDraftBodyFat(Math.min(60, +((draftBodyFat ?? 20) + 0.5).toFixed(1)))}
+            step="0.5"
+          />
+          {draftBodyFat !== null && (
+            <Pressable onPress={() => setDraftBodyFat(null)} style={{ marginTop: spacing.xs }}>
+              <Text style={{ color: colors.accent, fontWeight: "700" }}>Quitar dato manual</Text>
+            </Pressable>
+          )}
 
           {/* Preview recalculado */}
           {draftTargets.bmrKcal && (

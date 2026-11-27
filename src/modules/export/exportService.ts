@@ -97,7 +97,7 @@ const BACKUP_TABLES = [
 export async function exportFullBackupAsJson(): Promise<string> {
   await ensureDir();
   const db = await openDatabase();
-  const payload: Record<string, any[]> = {};
+  const payload: Record<string, any> = {};
   for (const t of BACKUP_TABLES) {
     payload[t] = await queryAsync<any>(db, `SELECT * FROM ${t}`, []);
   }
@@ -106,7 +106,7 @@ export async function exportFullBackupAsJson(): Promise<string> {
     appVersion: "0.3.0",
     tableCount: BACKUP_TABLES.length
   };
-  const filename = `aio_backup_${new Date().toISOString().slice(0, 10)}.json`;
+  const filename = `aio_backup_${new Date().toLocaleDateString("sv-SE")}.json`;
   const path = EXPORT_DIR + filename;
   await FileSystem.writeAsStringAsync(path, JSON.stringify(payload, null, 2));
   await Sharing.shareAsync(path, { mimeType: "application/json", dialogTitle: "Backup completo JSON" });
@@ -129,7 +129,7 @@ export async function exportTableAsCsv(tableName: string): Promise<string> {
     });
     lines.push(row.join(","));
   }
-  const filename = `${tableName}_${new Date().toISOString().slice(0, 10)}.csv`;
+  const filename = `${tableName}_${new Date().toLocaleDateString("sv-SE")}.csv`;
   const path = EXPORT_DIR + filename;
   await FileSystem.writeAsStringAsync(path, lines.join("\n"));
   await Sharing.shareAsync(path, { mimeType: "text/csv", dialogTitle: `Exportar ${tableName}` });

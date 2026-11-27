@@ -15,6 +15,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, RefreshControl, AppState
 } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
 import { colors, spacing, radius } from "@/theme/colors";
 import {
   checkAvailability,
@@ -23,12 +24,14 @@ import {
   openHealthConnectInPlayStore,
   openHealthConnectApp,
   isNativeModuleLoaded,
-  invalidateAvailabilityCache
+  invalidateAvailabilityCache,
+  getMissingReadPermissions,
+  getLastReadErrors
 } from "@/modules/health/healthConnectClient";
 import type { Availability, PermissionState } from "@/modules/health/types";
 
 import { readStepsForDay } from "@/modules/health/readers/stepsReader";
-import { readRestingHeartRate } from "@/modules/health/readers/heartRateReader";
+import { readHeartRateSummary } from "@/modules/health/readers/heartRateReader";
 import { readCaloriesForDay } from "@/modules/health/readers/caloriesReader";
 import { readSleepForDay } from "@/modules/health/readers/sleepReader";
 import { readLatestBodyComposition } from "@/modules/health/readers/bodyCompositionReader";
@@ -38,6 +41,18 @@ import { pushLastWorkoutToHealthConnect } from "@/modules/health/writers/workout
 import { forceDrainNow, isSyncRunning, getLastRunResult } from "@/modules/sync/syncWorker";
 import { countPending } from "@/modules/cloud/syncService";
 import { todayISO } from "@/modules/intelligence/dateUtils";
+import { useSettingsStore } from "@/store/settingsStore";
+
+/** Cada cuánto se vuelve a leer Health Connect mientras la pantalla está abierta. */
+const LIVE_REFRESH_MS = 20_000;
+
+function ago(ts: number | null | undefined): string {
+  if (!ts) return "";
+  const min = Math.max(0, Math.round((Date.now() - ts) / 60_000));
+  if (min < 1) return "ahora";
+  if (min < 60) return `hace ${min} min`;
+  return `hace ${Math.floor(min / 60)} h ${min % 60} min`;
+}
 
 export const HealthConnectScreen: React.FC = () => {
   const [availability, setAvailability] = useState<Availability>("checking");
@@ -53,17 +68,40 @@ export const HealthConnectScreen: React.FC = () => {
   const nativeLoaded = isNativeModuleLoaded();
   const [requestingPerm, setRequestingPerm] = useState(false);
 
+  const [missingPerms, setMissingPerms] = useState<{ type: string; label: string }[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const loadingRef = useRef(false);
+  const isFocused = useIsFocused();
+  const manualFat = useSettingsStore((st) => st.bodyFatManualPct);
+
+  /**
+   * Lee todas las métricas de HOY. Es segura frente a llamadas solapadas
+   * (el polling y el botón manual no se pisan).
+   */
   const loadTodayMetrics = useCallback(async () => {
-    const today = todayISO();
-    const [steps, rhr, cal, sleep, body, stress] = await Promise.all([
-      readStepsForDay(today).catch(() => null),
-      readRestingHeartRate(today).catch(() => null),
-      readCaloriesForDay(today).catch(() => null),
-      readSleepForDay(today).catch(() => null),
-      readLatestBodyComposition(90).catch(() => null),
-      readStressForDay(today).catch(() => null)
-    ]);
-    setTodayMetrics({ steps, rhr, cal, sleep, body, stress });
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    try {
+      const today = todayISO();
+      // El cliente HC se inicializa una sola vez (promesa compartida), así que
+      // lanzar las lecturas en paralelo ya no provoca "client is not initialized".
+      const [steps, hr, cal, sleep, body, stress, missing] = await Promise.all([
+        readStepsForDay(today).catch(() => null),
+        readHeartRateSummary(today).catch(() => null),
+        readCaloriesForDay(today).catch(() => null),
+        readSleepForDay(today).catch(() => null),
+        readLatestBodyComposition(90).catch(() => null),
+        readStressForDay(today).catch(() => null),
+        getMissingReadPermissions().catch(() => [])
+      ]);
+      setTodayMetrics({ steps, hr, cal, sleep, body, stress });
+      setMissingPerms(missing);
+      setLastUpdated(Date.now());
+      // El % de grasa de la báscula alimenta el plan (Nutrición, Perfil, Mi plan).
+      if (body?.bodyFatPct) useSettingsStore.getState().setScaleBodyFat(body.bodyFatPct);
+    } finally {
+      loadingRef.current = false;
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -90,11 +128,21 @@ export const HealthConnectScreen: React.FC = () => {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+
+  // --- Sincronización en vivo con el reloj ---
+  // Health Connect no "empuja" cambios: hay que consultarlo. Mientras esta
+  // pantalla está visible y la app en primer plano se relee cada 20 s, y también
+  // al volver a la app. (Los datos del reloj llegan a HC cuando Mi Fitness los
+  // sincroniza: si el reloj marca más que la app, abre Mi Fitness una vez.)
+  const canRead = permState === "granted" || permState === "partial";
   useEffect(() => {
-    if (permState === "granted" || permState === "partial") {
-      loadTodayMetrics();
-    }
-  }, [permState, loadTodayMetrics]);
+    if (!canRead || !isFocused) return;
+    loadTodayMetrics();
+    const id = setInterval(() => {
+      if (AppState.currentState === "active") loadTodayMetrics();
+    }, LIVE_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [canRead, isFocused, loadTodayMetrics]);
 
   // --- AppState listener: refrescar automáticamente al volver de HC ---
   // Cuando el usuario pulsa 'Conceder permisos', abrimos los ajustes de HC.
@@ -243,45 +291,89 @@ export const HealthConnectScreen: React.FC = () => {
         </Pressable>
       </Section>
 
+      {/* --- Permisos que faltan (Peso / % Grasa / Estatura…) --- */}
+      {missingPerms.length > 0 && (permState === "granted" || permState === "partial") && (
+        <Section title="⚠️ Faltan permisos de lectura">
+          <Text style={styles.hint}>
+            Sin estos permisos esos datos salen vacíos ("lacks the following permissions"):
+          </Text>
+          <Text style={[styles.hint, { color: colors.warning }]}>
+            {missingPerms.map((m) => `• ${m.label}`).join("\n")}
+          </Text>
+          <Text style={styles.hint}>
+            Abre Health Connect → Permisos de apps → All-in-One Fitness y activa todos.
+          </Text>
+          <Pressable style={styles.btnPrimary} onPress={openHealthConnectApp}>
+            <Text style={styles.btnPrimaryText}>Abrir permisos de Health Connect</Text>
+          </Pressable>
+        </Section>
+      )}
+
       {/* --- Dashboard de métricas del smartwatch + báscula --- */}
       {todayMetrics && (
         <Section title="📊 Datos de hoy (Mi Fitness + Báscula S400)">
-          {/* Grid de tarjetas 2x4 */}
+          <Text style={styles.liveLine}>
+            🟢 En vivo · actualizado {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : "—"} · se refresca cada {LIVE_REFRESH_MS / 1000} s
+          </Text>
           <View style={styles.metricsGrid}>
             {/* Pasos */}
             <View style={styles.metricCard}>
               <Text style={styles.metricEmoji}>👟</Text>
               <Text style={styles.metricValue}>
-                {todayMetrics.steps ? todayMetrics.steps.value.toLocaleString() : "—"}
+                {todayMetrics.steps ? Math.round(todayMetrics.steps.value).toLocaleString() : "—"}
               </Text>
               <Text style={styles.metricLabel}>Pasos</Text>
             </View>
 
-            {/* FC Reposo */}
+            {/* FC actual */}
             <View style={styles.metricCard}>
               <Text style={styles.metricEmoji}>❤️</Text>
               <Text style={styles.metricValue}>
-                {todayMetrics.rhr != null ? `${todayMetrics.rhr}` : "—"}
+                {todayMetrics.hr ? `${todayMetrics.hr.latestBpm}` : "—"}
               </Text>
-              <Text style={styles.metricLabel}>FC Reposo (bpm)</Text>
+              <Text style={styles.metricLabel}>
+                FC actual (bpm){todayMetrics.hr ? `\n${ago(todayMetrics.hr.latestAt)}` : ""}
+              </Text>
+            </View>
+
+            {/* FC reposo */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>🫀</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.hr?.restingBpm != null ? `${todayMetrics.hr.restingBpm}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>
+                FC reposo (bpm){todayMetrics.hr ? `\nmedia ${todayMetrics.hr.avgBpm} · máx ${todayMetrics.hr.maxBpm}` : ""}
+              </Text>
             </View>
 
             {/* Calorías activas */}
             <View style={styles.metricCard}>
               <Text style={styles.metricEmoji}>🔥</Text>
               <Text style={styles.metricValue}>
-                {todayMetrics.cal ? `${Math.round(todayMetrics.cal.activeKcal)}` : "—"}
+                {todayMetrics.cal ? `${Math.round(todayMetrics.cal.activeKcal).toLocaleString()}` : "—"}
               </Text>
-              <Text style={styles.metricLabel}>Kcal Activas</Text>
+              <Text style={styles.metricLabel}>Kcal activas</Text>
             </View>
 
             {/* Calorías basales */}
             <View style={styles.metricCard}>
               <Text style={styles.metricEmoji}>💤</Text>
               <Text style={styles.metricValue}>
-                {todayMetrics.cal ? `${Math.round(todayMetrics.cal.basalKcal)}` : "—"}
+                {todayMetrics.cal && todayMetrics.cal.basalSource !== "none" ? `${Math.round(todayMetrics.cal.basalKcal).toLocaleString()}` : "—"}
               </Text>
-              <Text style={styles.metricLabel}>Kcal Basal</Text>
+              <Text style={styles.metricLabel}>
+                Kcal basal{todayMetrics.cal?.basalSource === "profile" ? "\n(estimada con tu perfil)" : ""}
+              </Text>
+            </View>
+
+            {/* Calorías totales */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricEmoji}>⚡</Text>
+              <Text style={styles.metricValue}>
+                {todayMetrics.cal ? `${Math.round(todayMetrics.cal.totalKcal).toLocaleString()}` : "—"}
+              </Text>
+              <Text style={styles.metricLabel}>Kcal totales hoy</Text>
             </View>
 
             {/* Sueño */}
@@ -313,42 +405,60 @@ export const HealthConnectScreen: React.FC = () => {
               </Text>
             </View>
 
-            {/* % Grasa (báscula S400) */}
+            {/* % Grasa: báscula (HC) o, si no hay, el valor manual del perfil */}
             <View style={[styles.metricCard, { borderColor: colors.accent }]}>
               <Text style={styles.metricEmoji}>📏</Text>
               <Text style={[styles.metricValue, { color: colors.accent }]}>
-                {todayMetrics.body?.bodyFatPct != null ? `${todayMetrics.body.bodyFatPct.toFixed(1)}` : "—"}
+                {todayMetrics.body?.bodyFatPct != null
+                  ? `${Number(todayMetrics.body.bodyFatPct).toFixed(1)}`
+                  : manualFat ? `${manualFat}` : "—"}
               </Text>
-              <Text style={styles.metricLabel}>% Grasa</Text>
+              <Text style={styles.metricLabel}>
+                % Grasa{todayMetrics.body?.bodyFatPct == null ? (manualFat ? "\n(manual)" : "\nsin dato de la báscula") : "\n(báscula)"}
+              </Text>
             </View>
           </View>
 
+          {todayMetrics.body?.bodyFatPct == null && !manualFat && (
+            <Text style={styles.hint}>
+              💡 La báscula no ha enviado el % de grasa a Health Connect. En Mi Fitness abre la medición
+              de la báscula y comprueba que "Grasa corporal" se comparte con Health Connect; mientras
+              tanto puedes ponerlo a mano en Más → Mi perfil.
+            </Text>
+          )}
+          {Object.keys(getLastReadErrors()).length > 0 && (
+            <Text style={[styles.hint, { color: colors.warning }]}>
+              Lecturas con error: {Object.keys(getLastReadErrors()).join(", ")} (revisa permisos).
+            </Text>
+          )}
+
           {/* Resumen inteligente */}
-          {todayMetrics.body?.weightKg && (
+          {(todayMetrics.steps || todayMetrics.body?.weightKg || todayMetrics.cal) && (
             <View style={styles.summaryBox}>
               <Text style={styles.summaryTitle}>🧠 Análisis inteligente</Text>
               {(() => {
-                const weight = todayMetrics.body.weightKg;
-                const bf = todayMetrics.body.bodyFatPct;
+                const weight = todayMetrics.body?.weightKg ?? 0;
+                const bf = todayMetrics.body?.bodyFatPct ?? manualFat ?? null;
                 const steps = todayMetrics.steps?.value ?? 0;
                 const kcal = todayMetrics.cal?.activeKcal ?? 0;
+                const rhr = todayMetrics.hr?.restingBpm ?? null;
                 const tips: string[] = [];
 
-                if (steps > 0) tips.push(`✅ ${steps.toLocaleString()} pasos hoy — ${steps >= 10000 ? "¡Objetivo cumplido!" : `faltan ${(10000 - steps).toLocaleString()} para 10k`}`);
+                if (steps > 0) tips.push(`✅ ${Math.round(steps).toLocaleString()} pasos hoy — ${steps >= 10000 ? "¡Objetivo cumplido!" : `faltan ${Math.round(10000 - steps).toLocaleString()} para 10k`}`);
                 if (kcal > 0) tips.push(`🔥 ${Math.round(kcal)} kcal activas quemadas`);
                 if (weight > 0) tips.push(`⚖️ Peso: ${weight.toFixed(1)} kg`);
-                if (bf != null) {
+                if (bf != null && weight > 0) {
                   const leanMass = weight * (1 - bf / 100);
                   const fatMass = weight * (bf / 100);
                   tips.push(`📊 Masa magra: ${leanMass.toFixed(1)} kg · Masa grasa: ${fatMass.toFixed(1)} kg`);
-                  if (bf > 25) tips.push(`⚠️ % grasa elevado (${bf.toFixed(1)}%). Considera déficit calórico.`);
-                  else if (bf < 12) tips.push(`✅ % grasa bajo (${bf.toFixed(1)}%). Excelente definición.`);
-                  else tips.push(`✅ % grasa en rango saludable (${bf.toFixed(1)}%)`);
+                  if (bf > 25) tips.push(`⚠️ % grasa elevado (${Number(bf).toFixed(1)}%). Considera déficit calórico.`);
+                  else if (bf < 12) tips.push(`✅ % grasa bajo (${Number(bf).toFixed(1)}%). Excelente definición.`);
+                  else tips.push(`✅ % grasa en rango saludable (${Number(bf).toFixed(1)}%)`);
                 }
-                if (todayMetrics.rhr != null) {
-                  if (todayMetrics.rhr > 80) tips.push(`⚠️ FC reposo alta (${todayMetrics.rhr} bpm). Posible fatiga o estrés.`);
-                  else if (todayMetrics.rhr < 60) tips.push(`✅ FC reposo baja (${todayMetrics.rhr} bpm). Buen estado cardiovascular.`);
-                  else tips.push(`✅ FC reposo normal (${todayMetrics.rhr} bpm)`);
+                if (rhr != null) {
+                  if (rhr > 80) tips.push(`⚠️ FC reposo alta (${rhr} bpm). Posible fatiga o estrés.`);
+                  else if (rhr < 60) tips.push(`✅ FC reposo baja (${rhr} bpm). Buen estado cardiovascular.`);
+                  else tips.push(`✅ FC reposo normal (${rhr} bpm)`);
                 }
                 if (todayMetrics.sleep && typeof todayMetrics.sleep.asleepMs === "number" && !isNaN(todayMetrics.sleep.asleepMs)) {
                   const sleepH = todayMetrics.sleep.asleepMs / 3600000;
@@ -364,12 +474,11 @@ export const HealthConnectScreen: React.FC = () => {
             </View>
           )}
 
-          {/* Indicador de fuente de datos */}
           <Text style={styles.dataSourceHint}>
-            📡 Datos vía: Mi Fitness (smartwatch + báscula S400) → Health Connect → esta app
+            📡 Mi Fitness (reloj + báscula) → Health Connect → esta app. Si el reloj marca más pasos o kcal,
+            abre Mi Fitness un momento para que sincronice y aquí se actualiza solo.
           </Text>
 
-          {/* Botón refrescar datos */}
           <Pressable
             style={[styles.btnPrimary, { marginTop: spacing.sm }]}
             onPress={async () => {
@@ -378,7 +487,7 @@ export const HealthConnectScreen: React.FC = () => {
               setRefreshing(false);
             }}
           >
-            <Text style={styles.btnPrimaryText}>🔄 Actualizar datos del reloj</Text>
+            <Text style={styles.btnPrimaryText}>🔄 Actualizar ahora</Text>
           </Pressable>
         </Section>
       )}
@@ -584,6 +693,8 @@ const styles = StyleSheet.create({
   },
   summaryTitle: { color: colors.accent, fontSize: 14, fontWeight: "800", marginBottom: spacing.sm },
   summaryTip: { color: colors.bright, fontSize: 12, lineHeight: 18, marginBottom: 4 },
+
+  liveLine: { color: colors.ok, fontSize: 11, marginBottom: spacing.sm },
 
   // === Fuente de datos ===
   dataSourceHint: {

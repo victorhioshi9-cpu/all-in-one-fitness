@@ -30,6 +30,7 @@ import { extractSourceApp, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
 import { dayRange } from "./stepsReader";
 import { toLocalISO } from "@/modules/intelligence/dateUtils";
+import { massToKg, lengthToMeters, percentValue } from "../units";
 
 export interface BodyComposition {
   measuredAt: number;
@@ -65,7 +66,7 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
     sourceApp: extractSourceApp(r),
     startedAt: r.time,
     endedAt: r.time,
-    value: r.weight?.value ?? r.weight?.inKilograms ?? 0,
+    value: massToKg(r.weight),
     unit: "kg",
     rawMeta: r.metadata
   }));
@@ -74,7 +75,7 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
     sourceApp: extractSourceApp(r),
     startedAt: r.time,
     endedAt: r.time,
-    value: r.percentage ?? 0,
+    value: percentValue(r.percentage),
     unit: "%",
     rawMeta: r.metadata
   }));
@@ -83,14 +84,14 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
     sourceApp: extractSourceApp(r),
     startedAt: r.time,
     endedAt: r.time,
-    value: r.height?.value ?? r.height?.inMeters ?? 0,
+    value: lengthToMeters(r.height),
     unit: "m",
     rawMeta: r.metadata
   }));
 
-  const latestWeight = dedupeBySource(weightRecs).unique.slice().sort((a, b) => b.startedAt - a.startedAt)[0];
-  const latestFat = dedupeBySource(fatRecs).unique.slice().sort((a, b) => b.startedAt - a.startedAt)[0];
-  const latestHeight = dedupeBySource(heightRecs).unique.slice().sort((a, b) => b.startedAt - a.startedAt)[0];
+  const latestWeight = dedupeBySource(weightRecs.filter((r) => r.value > 0)).unique.slice().sort((a, b) => b.startedAt - a.startedAt)[0];
+  const latestFat = dedupeBySource(fatRecs.filter((r) => r.value > 0 && r.value < 80)).unique.slice().sort((a, b) => b.startedAt - a.startedAt)[0];
+  const latestHeight = dedupeBySource(heightRecs.filter((r) => r.value > 0)).unique.slice().sort((a, b) => b.startedAt - a.startedAt)[0];
 
   // Intentar leer tipos avanzados (HC 1.1+). Si la librería no los soporta,
   // las llamadas fallarán y caeremos al modo derivado.
@@ -168,18 +169,52 @@ export async function readWeightHistory(daysBack: number = 30): Promise<{ day: s
 
 /**
  * Última composición corporal registrada en los últimos `daysBack` días.
- * La báscula NO se usa a diario: leer solo "hoy" dejaba el peso en "—".
- * Devuelve el mismo objeto que readBodyCompositionForDay (del día del último pesaje).
+ *
+ * BUG CORREGIDO (% grasa no aparecía): antes se buscaba el último PESO y luego
+ * se leía el % de grasa SOLO de ese mismo día natural. Si la báscula (o Mi
+ * Fitness) escribe la grasa en otro momento/día, o el campo venía como objeto
+ * { value }, quedaba en "—". Ahora cada medida se busca por separado en toda la
+ * ventana y se toma la más reciente de cada tipo.
  */
 export async function readLatestBodyComposition(daysBack: number = 90): Promise<BodyComposition | null> {
   const endMs = Date.now();
   const startMs = endMs - daysBack * 86_400_000;
-  const raw = await readHcRecords("Weight", startMs, endMs, { pageSize: 500 });
-  if (raw.length === 0) return null;
-  const latest = raw
-    .map((r: any) => ({ t: typeof r.time === "number" ? r.time : new Date(r.time).getTime() }))
-    .filter((x) => !isNaN(x.t))
-    .sort((a, b) => b.t - a.t)[0];
-  if (!latest) return null;
-  return readBodyCompositionForDay(toLocalISO(new Date(latest.t)));
+
+  const [rawWeight, rawFat, rawHeight] = await Promise.all([
+    readHcRecords("Weight", startMs, endMs, { pageSize: 500 }),
+    readHcRecords("BodyFat", startMs, endMs, { pageSize: 500 }),
+    readHcRecords("Height", startMs, endMs, { pageSize: 100 })
+  ]);
+
+  const pickLatest = (raw: any[], conv: (r: any) => number, valid: (v: number) => boolean) =>
+    raw
+      .map((r) => ({ t: typeof r.time === "number" ? r.time : new Date(r.time).getTime(), v: conv(r), src: extractSourceApp(r) }))
+      .filter((x) => !Number.isNaN(x.t) && valid(x.v))
+      .sort((a, b) => b.t - a.t)[0];
+
+  const w = pickLatest(rawWeight, (r) => massToKg(r.weight), (v) => v > 20 && v < 400);
+  const f = pickLatest(rawFat, (r) => percentValue(r.percentage), (v) => v > 2 && v < 80);
+  const h = pickLatest(rawHeight, (r) => lengthToMeters(r.height), (v) => v > 0.5 && v < 2.6);
+
+  if (!w && !f) return null;
+
+  const weightKg = w?.v;
+  const bodyFatPct = f?.v;
+  const lean = weightKg !== undefined && bodyFatPct !== undefined ? weightKg * (1 - bodyFatPct / 100) : undefined;
+  const bone = weightKg !== undefined ? weightKg * 0.045 : undefined;
+  const water = weightKg !== undefined ? weightKg * 0.6 : undefined;
+
+  return {
+    measuredAt: w?.t ?? f?.t ?? Date.now(),
+    weightKg,
+    bodyFatPct,
+    leanBodyMassKg: lean,
+    boneMassKg: bone,
+    bodyWaterMassKg: water,
+    muscleMassKg: lean !== undefined && bone !== undefined ? lean - bone : undefined,
+    heightM: h?.v,
+    sourceApp: w?.src ?? f?.src,
+    // Masa ósea y agua son estimaciones (HC no las expone en esta versión).
+    derived: true
+  };
 }

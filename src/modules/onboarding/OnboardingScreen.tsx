@@ -330,10 +330,10 @@ const GOAL_OPTIONS: Array<{ value: Goal; emoji: string; label: string; desc: str
   {
     value: "lose",
     emoji: "🔥",
-    label: "Perder grasa",
-    desc: "Déficit calórico + alta proteína",
+    label: "Perder grasa / peso",
+    desc: "Déficit calórico + alta proteína para conservar músculo",
     kcalDelta: "−500 kcal/día",
-    protein: "2.0 g/kg"
+    protein: "2.2 g/kg"
   },
   {
     value: "maintain",
@@ -345,10 +345,18 @@ const GOAL_OPTIONS: Array<{ value: Goal; emoji: string; label: string; desc: str
   },
   {
     value: "gain",
+    emoji: "🍚",
+    label: "Ganar peso",
+    desc: "Superávit calórico más amplio (más kg en la báscula)",
+    kcalDelta: "+500 kcal/día",
+    protein: "1.8 g/kg"
+  },
+  {
+    value: "hypertrophy",
     emoji: "💪",
-    label: "Ganar músculo",
-    desc: "Superávit calórico controlado",
-    kcalDelta: "+400 kcal/día",
+    label: "Hipertrofia (ganar músculo)",
+    desc: "Superávit pequeño y mucha proteína para ganar músculo con poca grasa",
+    kcalDelta: "+250 kcal/día",
     protein: "2.2 g/kg"
   }
 ];

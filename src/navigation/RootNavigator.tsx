@@ -25,6 +25,8 @@ import { MealPlannerScreen } from "@/modules/mealPlanner/MealPlannerScreen";
 import { RecommendationsScreen } from "@/modules/recommendations/RecommendationsScreen";
 import { RemindersScreen } from "@/modules/reminders/localNotifications";
 import { ProfileScreen } from "@/modules/profile/ProfileScreen";
+import { PlanScreen } from "@/modules/plan/PlanScreen";
+import { PhysiqueScreen } from "@/modules/physique/PhysiqueScreen";
 
 import { exportWorkoutAsJson, exportWorkoutAsCsv, exportFullBackupAsJson, exportTableAsCsv } from "@/modules/export/exportService";
 import { openDatabase, queryAsync } from "@/modules/persistence/db";
@@ -93,6 +95,8 @@ const ExportScreenImpl: React.FC = () => {
 const TabBarMoreScreen: React.FC<{ navigation: any }> = ({ navigation }) => {
   const items = [
     { label: "Mi perfil", target: "Profile", emoji: "👤" },
+    { label: "Mi plan", target: "Plan", emoji: "🎯" },
+    { label: "Análisis físico (foto)", target: "Physique", emoji: "📸" },
     { label: "Calendario", target: "Calendar", emoji: "📅" },
     { label: "Periodización", target: "Periodization", emoji: "🎯" },
     { label: "Plan de comidas", target: "MealPlanner", emoji: "🍽" },
@@ -163,6 +167,8 @@ export const RootNavigator: React.FC = () => {
       </Stack.Screen>
       <Stack.Screen name="More" component={TabBarMoreScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Más" }} />
       <Stack.Screen name="Profile" component={ProfileScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Mi perfil" }} />
+      <Stack.Screen name="Plan" component={PlanScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Mi plan" }} />
+      <Stack.Screen name="Physique" component={PhysiqueScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Análisis físico" }} />
       <Stack.Screen name="Calendar" component={CalendarScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Calendario" }} />
       <Stack.Screen name="Periodization" component={PeriodizationScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Periodización" }} />
       <Stack.Screen name="MealPlanner" component={MealPlannerScreen} options={{ presentation: "modal", headerShown: true, headerTintColor: colors.accent, headerStyle: { backgroundColor: colors.bg }, headerTitle: "Plan de comidas" }} />

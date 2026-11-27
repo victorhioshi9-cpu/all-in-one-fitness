@@ -5,7 +5,7 @@
  * Mi Fitness suele escribir varios records parciales en el día que hay que sumar.
  */
 import { readHcRecords } from "../healthConnectClient";
-import { extractSourceApp, sumAccumulables, dedupeBySource, keepPrimarySource } from "../sourceFilter";
+import { extractSourceApp, sumAccumulables, dedupeExact, keepPrimarySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
 import { toLocalISO, parseLocalISO } from "@/modules/intelligence/dateUtils";
 
@@ -31,9 +31,9 @@ export async function readStepsForDay(dayIso: string): Promise<HealthRecord | nu
 
   if (records.length === 0) return null;
 
-  // 1) Deduplica entre sources (Mi Fitness + Google Fit + Samsung Health)
-  const { unique } = dedupeBySource(keepPrimarySource(records));
-  // 2) Suma los parciales del mismo source
+  // 1) Una sola fuente (la del reloj si existe) → nunca se mezclan relojes/teléfono.
+  // 2) Solo se eliminan duplicados EXACTOS y se suma el resto (ver dedupeExact).
+  const unique = dedupeExact(keepPrimarySource(records));
   return sumAccumulables(unique);
 }
 

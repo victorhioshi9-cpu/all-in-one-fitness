@@ -6,8 +6,19 @@
  *
  *   1) Cuenta repeticiones usando el ángulo articular del preset (rodilla en
  *      sentadilla, codo en curl, etc.) con umbrales relativos al rango de
- *      movimiento (ROM). Es sensible: cuenta desde ~40% del ROM; si no llegó
- *      a profundidad completa la cuenta pero la marca como PARCIAL.
+ *      movimiento (ROM).
+ *
+ *      v0.3.7 — CONTEO ESTRICTO (antes cualquier movimiento aleatorio contaba):
+ *        a) Hay que estar ARMADO: cuerpo completo visible y quieto en la
+ *           posición inicial durante un momento antes de que cuente nada.
+ *        b) La rep solo cuenta si llega al ≥ 70 % del recorrido (ROM).
+ *           Entre 40 % y 70 % es "rep parcial": se avisa pero NO suma.
+ *        c) Duración mínima total y mínima de cada fase (bajada/subida), y
+ *           velocidad angular máxima (descarta manotazos y saltos del detector).
+ *        d) Sin "temblores": se rechaza el recorrido con demasiados cambios
+ *           de sentido (movimiento errático, no una repetición).
+ *        e) Si se pierde el cuerpo a mitad de rep, la rep se anula.
+ *        f) Tras una rep rechazada hay que volver a quedarse quieto arriba.
  *   2) Evalúa la técnica cuadro a cuadro -> "good" | "bad" | "unknown", con
  *      histéresis para que el cuadro no parpadee entre rojo y verde.
  *   3) Da avisos por repetición ("Rep parcial: baja más").
@@ -30,11 +41,16 @@ export interface LiveSnapshot {
   bodyVisible: boolean;
   /** false en ejercicios isométricos (plancha, L-sit): no hay reps que contar. */
   supportsReps: boolean;
+  /**
+   * true cuando el usuario ya está en posición inicial y quieto: solo entonces
+   * se cuentan repeticiones. false = "colócate y quédate quieto".
+   */
+  armed: boolean;
 }
 
 export const EMPTY_SNAPSHOT: LiveSnapshot = {
   count: 0, partialCount: 0, angle: 0, phase: "up",
-  formState: "unknown", message: null, bodyVisible: false, supportsReps: true
+  formState: "unknown", message: null, bodyVisible: false, supportsReps: true, armed: false
 };
 
 // ---------------------------------------------------------------------------
@@ -76,11 +92,23 @@ const mirrorIdx = (i: number) => (i >= 11 ? (i % 2 === 1 ? i + 1 : i - 1) : i);
 // ---------------------------------------------------------------------------
 // Parámetros (ajustables)
 // ---------------------------------------------------------------------------
-const START_FRAC = 0.35;     // empieza el movimiento al recorrer 35% del ROM (antes 20%)
-const COUNT_FRAC = 0.6;      // cuenta la rep si llegó al 60% del ROM (antes 40%)
-const RETURN_FRAC = 0.2;     // vuelve a "arriba" a menos del 20% del ROM (antes 15%)
-const MIN_RANGE_DEG = 35;    // por debajo: ejercicio isométrico, sin conteo (antes 25)
-const MIN_REP_GAP_MS = 600;  // anti doble conteo (antes 350ms)
+const START_FRAC = 0.25;     // empieza el movimiento al recorrer 25% del ROM
+const COUNT_FRAC = 0.7;      // SOLO cuenta si llegó al 70% del ROM (antes 40%)
+const PARTIAL_FRAC = 0.4;    // entre 40% y 70%: se avisa como parcial, no suma
+const RETURN_FRAC = 0.15;    // vuelve a "arriba" a menos del 15% del ROM
+const MIN_RANGE_DEG = 25;    // por debajo: ejercicio isométrico, sin conteo
+const MIN_REP_GAP_MS = 500;  // anti doble conteo
+const MIN_REP_MS = 900;      // bajada + subida como mínimo
+const MIN_PHASE_MS = 250;    // cada fase (bajar / subir) como mínimo
+const MAX_REP_MS = 15000;    // si tarda más, se anula (el usuario se paró/abandonó)
+const MAX_ANGULAR_SPEED = 600; // °/s sobre el ángulo suavizado (manotazos / saltos)
+const MAX_REVERSALS = 3;     // cambios de sentido de ≥ REVERSAL_DEG dentro de una rep
+const REVERSAL_DEG = 10;
+const ARM_HOLD_MS = 700;     // quieto arriba para armar (inicio de serie)
+const REARM_HOLD_MS = 300;   // tras una rep rechazada
+const ARM_TOP_FRAC = 0.12;   // "arriba" = dentro del 12% superior del ROM
+const ARM_MAX_SPEED = 60;    // °/s: lo que se considera "quieto"
+const ABORT_LOST_FRAMES = 5; // cuerpo perdido a mitad de rep → anula la rep
 const GOOD_AFTER_FRAMES = 8;
 const BAD_AFTER_FRAMES = 5;
 const LOST_AFTER_FRAMES = 15;
@@ -104,6 +132,22 @@ export class LiveFormEngine {
   private lastCountTs = 0;
   private notice: { text: string; until: number } | null = null;
 
+  // --- validación estricta de repeticiones ---
+  private armed = false;
+  private armSince = 0;          // ms desde que está quieto arriba (0 = no)
+  private holdNeedMs = ARM_HOLD_MS;
+  private prevAngle: number | null = null;
+  private prevTs = 0;
+  private speed = 0;             // °/s (valor absoluto, suavizado)
+  private repStartTs = 0;
+  private bottomTs = 0;          // instante en que alcanzó el mínimo
+  private maxSpeedInRep = 0;
+  private reversals = 0;
+  private dirSign = 0;           // -1 bajando, +1 subiendo
+  private extremeAngle = 180;    // último extremo para medir cambios de sentido
+  private unknownFrames = 0;     // frames de la rep sin cuerpo completo
+  private repFrames = 0;
+
   private state: FormState = "unknown";
   private candidate: FormState = "unknown";
   private candidateN = 0;
@@ -113,6 +157,7 @@ export class LiveFormEngine {
   private readonly top: number;
   private readonly bottom: number;
   private readonly range: number;
+  private readonly reversalDeg: number;
   readonly supportsReps: boolean;
 
   constructor(private preset: ExercisePreset) {
@@ -120,10 +165,29 @@ export class LiveFormEngine {
     this.bottom = preset.stateMachine.bottomAngleDeg;
     this.range = this.top - this.bottom;
     this.supportsReps = this.range >= MIN_RANGE_DEG;
+    // En ejercicios de poco recorrido el umbral de "cambio de sentido" se reduce.
+    this.reversalDeg = Math.max(6, Math.min(REVERSAL_DEG, this.range * 0.12));
   }
 
   setCount(n: number) { this.count = Math.max(0, n); }
-  reset() { this.count = 0; this.partial = 0; this.phase = "up"; this.minAngle = 180; this.angleS = null; this.notice = null; }
+  reset() {
+    this.count = 0; this.partial = 0; this.phase = "up"; this.minAngle = 180; this.angleS = null; this.notice = null;
+    this.disarm(ARM_HOLD_MS);
+    this.prevAngle = null; this.prevTs = 0; this.speed = 0;
+  }
+
+  /** Congela/descongela el motor (descanso): al reanudar hay que volver a armarse. */
+  resume() { this.disarm(ARM_HOLD_MS); this.angleS = null; this.prevAngle = null; this.prevTs = 0; this.phase = "up"; this.minAngle = 180; }
+
+  private disarm(holdMs: number) {
+    this.armed = false; this.armSince = 0; this.holdNeedMs = holdMs;
+  }
+
+  private resetRepTracking() {
+    this.repStartTs = 0; this.bottomTs = 0; this.maxSpeedInRep = 0;
+    this.reversals = 0; this.dirSign = 0; this.extremeAngle = 180;
+    this.unknownFrames = 0; this.repFrames = 0;
+  }
 
   update(pose: Record<string, number> | null, nowMs: number): LiveSnapshot {
     if (!pose) return this.lose();
@@ -140,7 +204,12 @@ export class LiveFormEngine {
     this.angleS = this.angleS === null ? raw : smooth(this.angleS, raw, 0.4);
     const angle = this.angleS;
 
-    if (this.supportsReps) this.stepCounter(angle, nowMs);
+    // Cuerpo "suficientemente completo": tronco presente y segmentos con tamaño
+    // razonable (si la persona está muy lejos/recortada el ángulo es ruido).
+    const fullBody = this.bodyIsUsable(lm, t as [Landmark, Landmark, Landmark]);
+    this.updateSpeed(angle, nowMs);
+
+    if (this.supportsReps) this.stepCounter(angle, nowMs, fullBody);
 
     // --- técnica en vivo ---
     const fault = this.liveFault(lm, angle);
@@ -156,35 +225,139 @@ export class LiveFormEngine {
       formState: noticeActive ? "bad" : this.state,
       message: noticeActive ? this.notice!.text : (this.state === "bad" ? this.lastMessage : null),
       bodyVisible: true,
-      supportsReps: this.supportsReps
+      supportsReps: this.supportsReps,
+      armed: this.armed
     };
   }
 
   // ------------------------------------------------------------------------
-  private stepCounter(angle: number, now: number) {
+  /** Tronco (hombro + cadera) presente y segmentos del trípode no degenerados. */
+  private bodyIsUsable(lm: Landmark[], t: [Landmark, Landmark, Landmark]): boolean {
+    const hasShoulder = !!(lm[PoseLandmark.LEFT_SHOULDER] || lm[PoseLandmark.RIGHT_SHOULDER]);
+    const hasHip = !!(lm[PoseLandmark.LEFT_HIP] || lm[PoseLandmark.RIGHT_HIP]);
+    if (!hasShoulder || !hasHip) return false;
+    const seg1 = Math.hypot(t[0].x - t[1].x, t[0].y - t[1].y);
+    const seg2 = Math.hypot(t[2].x - t[1].x, t[2].y - t[1].y);
+    return seg1 > 0.04 && seg2 > 0.04;
+  }
+
+  /** Velocidad angular suavizada (°/s). */
+  private updateSpeed(angle: number, now: number) {
+    if (this.prevAngle !== null && this.prevTs > 0 && now - this.prevTs >= 20) {
+      const dt = (now - this.prevTs) / 1000;
+      const inst = Math.abs(angle - this.prevAngle) / dt;
+      this.speed = this.speed * 0.5 + inst * 0.5;
+      this.prevAngle = angle;
+      this.prevTs = now;
+    } else if (this.prevAngle === null) {
+      this.prevAngle = angle;
+      this.prevTs = now;
+      this.speed = 0;
+    }
+  }
+
+  /** Cuenta cambios de sentido de ≥ reversalDeg (zig-zag = movimiento errático). */
+  private trackReversal(angle: number) {
+    if (this.dirSign === 0) { this.dirSign = -1; this.extremeAngle = angle; return; }
+    if (this.dirSign === -1) {
+      if (angle < this.extremeAngle) this.extremeAngle = angle;
+      else if (angle - this.extremeAngle >= this.reversalDeg) { this.dirSign = 1; this.extremeAngle = angle; this.reversals++; }
+    } else {
+      if (angle > this.extremeAngle) this.extremeAngle = angle;
+      else if (this.extremeAngle - angle >= this.reversalDeg) { this.dirSign = -1; this.extremeAngle = angle; this.reversals++; }
+    }
+  }
+
+  private stepCounter(angle: number, now: number, fullBody: boolean) {
     const downAt = this.top - START_FRAC * this.range;
-    const upAt = this.top - RETURN_FRAC * this.range;
-    const countAt = this.top - COUNT_FRAC * this.range;
+    const armZone = this.top - ARM_TOP_FRAC * this.range;
 
     if (this.phase === "up") {
-      if (angle < downAt) { this.phase = "down"; this.minAngle = angle; }
+      // ---- 1) ARMAR: cuerpo completo, arriba y QUIETO durante un momento ----
+      if (!this.armed) {
+        const atTop = fullBody && angle >= armZone && this.speed <= ARM_MAX_SPEED;
+        if (!atTop) { this.armSince = 0; return; }
+        if (this.armSince === 0) { this.armSince = now; return; }
+        if (now - this.armSince >= this.holdNeedMs) { this.armed = true; this.armSince = 0; }
+        return;
+      }
+      // Si estando armado se pierde el cuerpo "usable", se desarma.
+      if (!fullBody) { this.disarm(ARM_HOLD_MS); return; }
+
+      // ---- 2) Empieza la bajada ----
+      if (angle < downAt) {
+        this.phase = "down";
+        this.minAngle = angle;
+        this.resetRepTracking();
+        this.repStartTs = now;
+        this.bottomTs = now;
+        this.trackReversal(angle);
+      }
+      return;
+    }
+
+    // ---- fase "down": rep en curso ----
+    this.repFrames++;
+    if (!fullBody) this.unknownFrames++;
+    this.maxSpeedInRep = Math.max(this.maxSpeedInRep, this.speed);
+    this.trackReversal(angle);
+    if (angle < this.minAngle) { this.minAngle = angle; this.bottomTs = now; }
+
+    if (now - this.repStartTs > MAX_REP_MS) {
+      this.abortRep();
+      return;
+    }
+
+    const upAt = this.top - RETURN_FRAC * this.range;
+    if (angle > upAt) this.finishRep(now);
+  }
+
+  /** Valida la rep al volver arriba. Solo suma si pasa TODOS los filtros. */
+  private finishRep(now: number) {
+    const countAt = this.top - COUNT_FRAC * this.range;
+    const partialAt = this.top - PARTIAL_FRAC * this.range;
+    const total = now - this.repStartTs;
+    const descMs = this.bottomTs - this.repStartTs;
+    const ascMs = now - this.bottomTs;
+
+    let reject: { notice: string | null; disarm: boolean } | null = null;
+    if (this.minAngle > partialAt) {
+      reject = { notice: null, disarm: false };                                   // meneo pequeño: se ignora
+    } else if (this.minAngle > countAt) {
+      reject = { notice: "No contó: recorre más el movimiento", disarm: true };   // 40–70 % del ROM
+    } else if (total < MIN_REP_MS || descMs < MIN_PHASE_MS || ascMs < MIN_PHASE_MS) {
+      reject = { notice: "No contó: muy rápido, controla el movimiento", disarm: true };
+    } else if (this.maxSpeedInRep > MAX_ANGULAR_SPEED) {
+      reject = { notice: "No contó: movimiento brusco", disarm: true };
+    } else if (this.reversals > MAX_REVERSALS) {
+      reject = { notice: "No contó: movimiento irregular", disarm: true };
+    } else if (this.repFrames > 0 && this.unknownFrames / this.repFrames > 0.3) {
+      reject = { notice: "No contó: no se ve tu cuerpo completo", disarm: true };
+    }
+
+    if (reject) {
+      if (reject.notice) this.notice = { text: reject.notice, until: now + NOTICE_MS };
+      if (reject.disarm) this.disarm(REARM_HOLD_MS);
     } else {
-      this.minAngle = Math.min(this.minAngle, angle);
-      if (angle > upAt) {
-        const reached = this.minAngle <= countAt;
-        if (reached && now - this.lastCountTs >= MIN_REP_GAP_MS) {
-          this.count++;
-          this.lastCountTs = now;
-          const full = this.minAngle <= this.bottom + this.preset.stateMachine.romToleranceDeg;
-          if (!full) {
-            this.partial++;
-            this.notice = { text: "Rep parcial: recorre más el movimiento", until: now + NOTICE_MS };
-          }
-        }
-        this.phase = "up";
-        this.minAngle = 180;
+      this.count++;
+      this.lastCountTs = now;
+      const full = this.minAngle <= this.bottom + this.preset.stateMachine.romToleranceDeg;
+      if (!full) {
+        this.partial++;
+        this.notice = { text: "Rep parcial: baja un poco más", until: now + NOTICE_MS };
       }
     }
+    this.phase = "up";
+    this.minAngle = 180;
+    this.resetRepTracking();
+  }
+
+  /** Anula la rep en curso sin contarla (cuerpo perdido, rep eterna…). */
+  private abortRep() {
+    this.phase = "up";
+    this.minAngle = 180;
+    this.resetRepTracking();
+    this.disarm(ARM_HOLD_MS);
   }
 
   private liveFault(lm: Landmark[], angle: number): string | null {
@@ -233,14 +406,20 @@ export class LiveFormEngine {
 
   private lose(): LiveSnapshot {
     this.lostN++;
+    // Cuerpo perdido a mitad de rep → rep anulada (antes seguía "viva" 15 frames).
+    if (this.phase === "down" && this.lostN >= ABORT_LOST_FRAMES) this.abortRep();
     if (this.lostN >= LOST_AFTER_FRAMES) {
       this.state = "unknown"; this.candidate = "unknown"; this.candidateN = 0;
       this.phase = "up"; this.minAngle = 180; this.angleS = null;
+      this.prevAngle = null; this.prevTs = 0; this.speed = 0;
+      this.resetRepTracking();
+      this.disarm(ARM_HOLD_MS);
     }
     return {
       count: this.count, partialCount: this.partial, angle: this.angleS ?? 0, phase: this.phase,
       formState: this.state, message: null,
-      bodyVisible: this.lostN < LOST_AFTER_FRAMES, supportsReps: this.supportsReps
+      bodyVisible: this.lostN < LOST_AFTER_FRAMES, supportsReps: this.supportsReps,
+      armed: this.armed
     };
   }
 }

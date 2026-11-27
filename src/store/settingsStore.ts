@@ -11,9 +11,17 @@
  */
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { buildPlan } from "@/modules/plan/planEngine";
 
 export type Gender = "male" | "female";
-export type Goal = "lose" | "maintain" | "gain";
+/**
+ * lose        = perder grasa/peso (déficit)
+ * maintain    = mantener
+ * gain        = ganar peso (superávit más amplio)
+ * hypertrophy = hipertrofia: ganar músculo con superávit pequeño (lean bulk)
+ */
+export type Goal = "lose" | "maintain" | "gain" | "hypertrophy";
+export type Experience = "beginner" | "intermediate" | "advanced";
 export type ActivityLevel =
   | "sedentary" | "light" | "moderate" | "active" | "very_active";
 
@@ -24,6 +32,12 @@ export interface OnboardingData {
   gender: Gender | null;
   goal: Goal | null;
   activityLevel: ActivityLevel | null;
+  /** % de grasa introducido a mano (si la báscula no lo sincroniza). */
+  bodyFatManualPct?: number | null;
+  /** % de grasa leído de la báscula vía Health Connect (se actualiza solo). */
+  bodyFatScalePct?: number | null;
+  /** Experiencia de entrenamiento (define volumen y frecuencia del plan). */
+  experience?: Experience | null;
 }
 
 interface ComputedTargets {
@@ -48,6 +62,8 @@ interface SettingsState extends OnboardingData, ComputedTargets {
   toggle: (key: "keepScreenAwake" | "voiceCoach" | "audioTones" | "accidentalTouchGuard") => void;
   setExport: (f: "json" | "csv") => void;
   setOnboardingData: (data: Partial<OnboardingData>) => void;
+  /** Guarda el % de grasa de la báscula (HC) y recalcula objetivos. */
+  setScaleBodyFat: (pct: number | null) => void;
   setOnboardingCompleted: (done: boolean) => void;
 }
 
@@ -59,16 +75,12 @@ const ACTIVITY_FACTOR: Record<ActivityLevel, number> = {
   very_active: 1.9
 };
 
-const GOAL_KCAL_DELTA: Record<Goal, number> = {
-  lose: -500,
-  maintain: 0,
-  gain: 400
-};
 
 const GOAL_PROTEIN_FACTOR: Record<Goal, number> = {
-  lose: 2.0,
+  lose: 2.2,        // más proteína en déficit para conservar músculo
   maintain: 1.8,
-  gain: 2.2
+  gain: 1.8,
+  hypertrophy: 2.2
 };
 
 /**
@@ -82,23 +94,29 @@ export function computeTargets(data: OnboardingData): ComputedTargets {
     return { bmrKcal: null, targetKcalDay: null, targetProteinG: null };
   }
 
-  // BMR Mifflin-St Jeor
+  // Con objetivo y actividad definidos, la fuente de verdad es el motor del plan
+  // (así Nutrición, Perfil y "Mi plan" muestran SIEMPRE las mismas cifras).
+  if (goal && activityLevel) {
+    const plan = buildPlan({
+      weightKg, heightCm, ageYears, gender, goal, activityLevel,
+      experience: data.experience ?? "intermediate",
+      bodyFatPct: data.bodyFatManualPct ?? data.bodyFatScalePct ?? null
+    });
+    return {
+      bmrKcal: plan.calories.bmr,
+      targetKcalDay: plan.calories.target,
+      targetProteinG: plan.macros.proteinG
+    };
+  }
+
+  // Sin objetivo/actividad: solo BMR (Mifflin-St Jeor) y TDEE si hay actividad.
   const base = 10 * weightKg + 6.25 * heightCm - 5 * ageYears;
   const bmr = gender === "male" ? base + 5 : base - 161;
-
-  // TDEE = BMR * factor actividad
   const tdee = activityLevel ? bmr * ACTIVITY_FACTOR[activityLevel] : bmr;
-
-  // Ajuste por objetivo
-  const targetKcal = goal ? Math.round(tdee + GOAL_KCAL_DELTA[goal]) : Math.round(tdee);
-
-  // Proteína por kg de peso y objetivo
-  const targetProtein = goal ? Math.round(weightKg * GOAL_PROTEIN_FACTOR[goal]) : null;
-
   return {
     bmrKcal: Math.round(bmr),
-    targetKcalDay: targetKcal,
-    targetProteinG: targetProtein
+    targetKcalDay: Math.round(tdee),
+    targetProteinG: goal ? Math.round(weightKg * GOAL_PROTEIN_FACTOR[goal]) : null
   };
 }
 
@@ -121,6 +139,9 @@ function serialize(state: SettingsState): Record<string, unknown> {
     gender: state.gender,
     goal: state.goal,
     activityLevel: state.activityLevel,
+    bodyFatManualPct: state.bodyFatManualPct,
+    bodyFatScalePct: state.bodyFatScalePct,
+    experience: state.experience,
     // Computados (caché)
     bmrKcal: state.bmrKcal,
     targetKcalDay: state.targetKcalDay,
@@ -144,6 +165,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   gender: null,
   goal: null,
   activityLevel: null,
+  bodyFatManualPct: null,
+  bodyFatScalePct: null,
+  experience: "intermediate",
 
   // Computados
   bmrKcal: null,
@@ -162,7 +186,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           ageYears: parsed.ageYears ?? null,
           gender: parsed.gender ?? null,
           goal: parsed.goal ?? null,
-          activityLevel: parsed.activityLevel ?? null
+          activityLevel: parsed.activityLevel ?? null,
+          bodyFatManualPct: parsed.bodyFatManualPct ?? null,
+          bodyFatScalePct: parsed.bodyFatScalePct ?? null,
+          experience: parsed.experience ?? "intermediate"
         };
         const targets = computeTargets(merged);
         set({ ...parsed, ...targets });
@@ -190,10 +217,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ageYears: data.ageYears ?? get().ageYears,
       gender: data.gender ?? get().gender,
       goal: data.goal ?? get().goal,
-      activityLevel: data.activityLevel ?? get().activityLevel
+      activityLevel: data.activityLevel ?? get().activityLevel,
+      // null explícito = borrar; undefined = conservar el valor actual
+      bodyFatManualPct: data.bodyFatManualPct !== undefined ? data.bodyFatManualPct : get().bodyFatManualPct,
+      bodyFatScalePct: get().bodyFatScalePct,
+      experience: data.experience !== undefined ? data.experience : get().experience
     };
     const targets = computeTargets(merged);
     set({ ...merged, ...targets });
+    AsyncStorage.setItem(PERSIST_KEY, JSON.stringify(serialize(get())));
+  },
+
+  setScaleBodyFat: (pct) => {
+    const cur = get();
+    if (cur.bodyFatScalePct === pct) return;
+    const merged: OnboardingData = {
+      heightCm: cur.heightCm, weightKg: cur.weightKg, ageYears: cur.ageYears,
+      gender: cur.gender, goal: cur.goal, activityLevel: cur.activityLevel,
+      bodyFatManualPct: cur.bodyFatManualPct, bodyFatScalePct: pct, experience: cur.experience
+    };
+    set({ bodyFatScalePct: pct, ...computeTargets(merged) });
     AsyncStorage.setItem(PERSIST_KEY, JSON.stringify(serialize(get())));
   },
 

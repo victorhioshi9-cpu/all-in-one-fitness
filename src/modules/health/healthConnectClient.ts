@@ -33,7 +33,7 @@ import {
   openHealthConnectSettings as _openHCSettings,
   type Permission
 } from "react-native-health-connect";
-import { READ_PERMISSIONS, WRITE_PERMISSIONS, type RecordType, type PermissionState } from "./types";
+import { READ_PERMISSIONS, WRITE_PERMISSIONS, RECORD_LABEL, type RecordType, type PermissionState } from "./types";
 
 const HC_PLAY_STORE_PACKAGE = "com.google.android.apps.healthdata";
 const HC_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${HC_PLAY_STORE_PACKAGE}`;
@@ -72,6 +72,42 @@ function normalizeRecord(r: any): any {
 const PERMISSION_TIMEOUT_MS = 30_000;
 
 let _initialized = false;
+let _initPromise: Promise<boolean> | null = null;
+
+/** Últimos errores de lectura por tipo (para mostrar en la UI qué falló). */
+const _lastReadErrors: Record<string, string> = {};
+export function getLastReadErrors(): Record<string, string> { return { ..._lastReadErrors }; }
+
+/**
+ * Inicializa el SDK UNA sola vez y de forma segura frente a llamadas paralelas.
+ *
+ * BUG CORREGIDO ("Health Connect client is not initialized"): antes se ponía
+ * `_initialized = true` aunque initialize() hubiese fallado o aún no hubiese
+ * terminado (las lecturas se lanzaban en paralelo con Promise.all). Ahora todas
+ * las llamadas esperan la MISMA promesa y solo se marca como listo si
+ * initialize() devolvió true. `force` descarta el estado y reinicializa.
+ */
+export async function ensureInitialized(force = false): Promise<boolean> {
+  if (force) { _initialized = false; _initPromise = null; }
+  if (_initialized) return true;
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    try {
+      const ok = await initialize();
+      _initialized = ok !== false;
+      if (!_initialized) console.warn("[healthConnect] initialize() devolvió false");
+      return _initialized;
+    } catch (err) {
+      console.warn("[healthConnect] initialize falló:", err);
+      _initialized = false;
+      return false;
+    } finally {
+      _initPromise = null;
+    }
+  })();
+  return _initPromise;
+}
+
 let _availabilityCache: { value: "installed" | "not_installed"; ts: number } | null = null;
 const AVAILABILITY_CACHE_MS = 5_000;
 
@@ -104,10 +140,7 @@ export async function checkAvailability(): Promise<"installed" | "not_installed"
     return _availabilityCache.value;
   }
   try {
-    if (!_initialized) {
-      try { await initialize(); } catch { /* idempotente */ }
-      _initialized = true;
-    }
+    await ensureInitialized();
 
     let available = false;
     if (typeof getSdkStatus === "function") {
@@ -267,14 +300,7 @@ export async function requestAllPermissions(): Promise<PermissionState> {
   }
 
   // Inicializamos el SDK para que getSdkStatus/getGrantedPermissions funcionen
-  if (!_initialized) {
-    try {
-      await initialize();
-    } catch (err) {
-      console.warn("[healthConnect] initialize falló:", err);
-    }
-    _initialized = true;
-  }
+  await ensureInitialized();
 
   // Abrimos directamente los ajustes de Health Connect.
   // El usuario concede manualmente y vuelve a la app.
@@ -291,31 +317,43 @@ export async function requestAllPermissions(): Promise<PermissionState> {
  * Revisa qué permisos están concedidos actualmente sin pedirlos.
  * Lo usa la UI para mostrar el estado real.
  *
- * Hardening: si getGrantedPermissions crashea (módulo mal inicializado),
- * devolvemos "not_requested" en lugar de propagar el error.
+ * "granted"  = todos los permisos de LECTURA concedidos (los de escritura son
+ *              opcionales: solo sirven para publicar entrenos en HC).
+ * "partial"  = al menos uno de lectura concedido pero faltan otros.
+ * "denied"   = hay permisos concedidos a la app pero ninguno de lectura.
  */
 export async function getCurrentPermissionState(): Promise<PermissionState> {
   if (!isNativeModuleLoaded()) return "not_requested";
   try {
-    if (!_initialized) {
-      try { await initialize(); } catch { /* idempotente */ }
-      _initialized = true;
-    }
+    await ensureInitialized();
     const granted = (await getGrantedPermissions()) as Permission[];
     if (!granted || granted.length === 0) return "not_requested";
 
-    const wantedPerms = buildPermissionsList();
-    const wantedRead = wantedPerms.filter((p) => p.accessType === "read");
-    const wantedWrite = wantedPerms.filter((p) => p.accessType === "write");
-    const allReadGranted = wantedRead.every((p) => isPermGranted(p, granted));
-    const allWriteGranted = wantedWrite.every((p) => isPermGranted(p, granted));
-
-    if (allReadGranted && allWriteGranted) return "granted";
-    if (allReadGranted || allWriteGranted) return "partial";
+    const wantedRead = buildPermissionsList().filter((p) => p.accessType === "read");
+    const nGranted = wantedRead.filter((p) => isPermGranted(p, granted)).length;
+    if (nGranted === wantedRead.length) return "granted";
+    if (nGranted > 0) return "partial";
     return "denied";
   } catch (err) {
     console.warn("[healthConnect] getCurrentPermissionState failed:", err);
     return "not_requested";
+  }
+}
+
+/**
+ * Lista los tipos de LECTURA que todavía no tienen permiso (p. ej. Peso, % Grasa,
+ * Estatura: justo los que fallaban con "lacks the following permissions").
+ */
+export async function getMissingReadPermissions(): Promise<{ type: RecordType; label: string }[]> {
+  if (!isNativeModuleLoaded()) return READ_PERMISSIONS.map((t) => ({ type: t, label: RECORD_LABEL[t] ?? t }));
+  try {
+    await ensureInitialized();
+    const granted = (await getGrantedPermissions()) as Permission[];
+    return READ_PERMISSIONS
+      .filter((rt) => !(granted ?? []).some((g) => g.accessType === "read" && g.recordType === rt))
+      .map((t) => ({ type: t, label: RECORD_LABEL[t] ?? t }));
+  } catch {
+    return [];
   }
 }
 
@@ -333,6 +371,11 @@ export async function revokePermissions(): Promise<void> {
 /**
  * Helper para invocar un reader genérico con paginación por time window.
  * Lo usan todos los readers especializados.
+ *
+ *  - Espera a que el SDK esté inicializado (promesa compartida).
+ *  - Si falla con "not initialized", reinicializa y reintenta UNA vez.
+ *  - Sigue `pageToken` para no truncar días con muchos records (HC devuelve
+ *    como máximo `pageSize` por página).
  */
 export async function readHcRecords(
   recordType: RecordType,
@@ -340,34 +383,49 @@ export async function readHcRecords(
   endTimeEpochMs: number,
   extraOps?: Record<string, any>
 ): Promise<any[]> {
-  try {
-    const hc = require("react-native-health-connect");
+  const MAX_PAGES = 20;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const ready = await ensureInitialized(attempt > 0);
+      if (!ready) throw new Error("Health Connect client is not initialized");
+      const hc = require("react-native-health-connect");
 
-    // INICIALIZAR el SDK antes de leer. Sin esto: "client is not initialized".
-    if (!_initialized) {
-      try { await hc.initialize(); } catch { /* idempotente */ }
-      _initialized = true;
-    }
-
-    // SDK v3.2 espera startTime/endTime como String ISO 8601.
-    const startISO = new Date(startTimeEpochMs).toISOString();
-    const endISO = new Date(endTimeEpochMs).toISOString();
-    console.log(`[healthConnect] readHcRecords(${recordType}) range: ${startISO} → ${endISO}`);
-    const result = await hc.readRecords(recordType, {
-      timeRangeFilter: {
+      // SDK v3.2 espera startTime/endTime como String ISO 8601.
+      const timeRangeFilter = {
         operator: "between",
-        startTime: startISO,
-        endTime: endISO
-      },
-      ...(extraOps ?? {})
-    });
-    const records = (Array.isArray(result) ? result : (result?.records ?? [])).map(normalizeRecord);
-    console.log(`[healthConnect] readHcRecords(${recordType}) → ${records.length} registros`);
-    return records;
-  } catch (err) {
-    console.error(`[healthConnect] readHcRecords(${recordType}) ERROR:`, err);
-    return [];
+        startTime: new Date(startTimeEpochMs).toISOString(),
+        endTime: new Date(endTimeEpochMs).toISOString()
+      };
+
+      const all: any[] = [];
+      let pageToken: string | undefined;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const result = await hc.readRecords(recordType, {
+          timeRangeFilter,
+          ...(extraOps ?? {}),
+          ...(pageToken ? { pageToken } : {})
+        });
+        const recs: any[] = Array.isArray(result) ? result : (result?.records ?? []);
+        all.push(...recs);
+        pageToken = Array.isArray(result) ? undefined : result?.pageToken;
+        if (!pageToken || recs.length === 0) break;
+      }
+
+      delete _lastReadErrors[recordType];
+      console.log(`[healthConnect] readHcRecords(${recordType}) → ${all.length} registros`);
+      return all.map(normalizeRecord);
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (attempt === 0 && /not initialized/i.test(msg)) {
+        console.warn(`[healthConnect] ${recordType}: cliente no inicializado, reintentando…`);
+        continue;
+      }
+      _lastReadErrors[recordType] = msg;
+      console.error(`[healthConnect] readHcRecords(${recordType}) ERROR:`, err);
+      return [];
+    }
   }
+  return [];
 }
 
 /** Es true solo si el APK está corriendo en Android. */

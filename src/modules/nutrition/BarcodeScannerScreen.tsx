@@ -133,21 +133,16 @@ export const BarcodeScannerScreen: React.FC<{ onClose: () => void }> = ({ onClos
               <Pressable
                 style={styles.addBtn}
                 onPress={async () => {
-                  // Necesitamos el food_id; buscamos en cache
-                  const { getFoodByBarcodeFromCache } = await import("./openFoodFactsClient");
-                  const cached = await getFoodByBarcodeFromCache(product.barcode);
-                  if (!cached) {
-                    setError("Producto cacheado no disponible");
-                    return;
-                  }
-                  // getFoodByBarcodeFromCache returns OffProduct; we need FoodRow.id
-                  // Vamos a buscar por barcode directo en SQLite
+                  // BUG CORREGIDO: se importaba getFoodByBarcodeFromCache, que no existe
+                  // (lanzaba TypeError al pulsar "Añadir"). Se busca directo en SQLite.
                   const { openDatabase, queryAsync } = await import("@/modules/persistence/db");
                   const db = await openDatabase();
                   const rows = await queryAsync<{ id: string }>(db, "SELECT id FROM foods WHERE barcode = ?", [product.barcode]);
                   if (rows[0]) {
                     await logFood({ foodId: rows[0].id, grams, mealName: "snack" });
                     setLogged(true);
+                  } else {
+                    setError("No se encontró el producto en tu base local");
                   }
                 }}
               >
