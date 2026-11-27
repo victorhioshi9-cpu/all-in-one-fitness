@@ -12,6 +12,7 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, sumAccumulables, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
+import { toMs } from "@/modules/intelligence/dateUtils";
 import { dayRange } from "./stepsReader";
 
 export interface DailyCalories {
@@ -34,8 +35,8 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     recordType: "ActiveCaloriesBurned",
     sourceApp: extractSourceApp(r),
     day: dayIso,
-    startedAt: r.startTime,
-    endedAt: r.endTime,
+    startedAt: toMs(r.startTime),
+    endedAt: toMs(r.endTime),
     value: r.energy?.value ?? r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
     unit: "kcal",
     rawMeta: r.metadata
@@ -50,7 +51,7 @@ export async function readCaloriesForDay(dayIso: string): Promise<DailyCalories 
     recordType: "BasalMetabolicRate",
     sourceApp: extractSourceApp(r),
     day: dayIso,
-    startedAt: r.time,
+    startedAt: toMs(r.time),
     value: r.basalMetabolicRate?.value ?? r.basalMetabolicRate?.inCalories ?? r.basalMetabolicRate?.inKilocalories ?? 0,
     unit: "kcal/day",
     rawMeta: r.metadata
@@ -88,8 +89,8 @@ export async function readActiveCaloriesInRange(
   const recs: HealthRecord[] = raw.map((r: any) => ({
     recordType: "ActiveCaloriesBurned",
     sourceApp: extractSourceApp(r),
-    startedAt: r.startTime,
-    endedAt: r.endTime,
+    startedAt: toMs(r.startTime),
+    endedAt: toMs(r.endTime),
     value: r.energy?.value ?? r.energy?.inCalories ?? r.energy?.inKilocalories ?? 0,
     unit: "kcal"
   }));

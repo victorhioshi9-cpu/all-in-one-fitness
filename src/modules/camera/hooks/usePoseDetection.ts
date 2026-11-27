@@ -80,6 +80,11 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
 
       frameCountRef.current++;
 
+      // Log de diagnóstico UNA sola vez (primer frame exitoso).
+      if (frameCountRef.current === 1) {
+        console.log("[usePoseDetection] PRIMER FRAME:", "w=" + (frame as any).width, "h=" + (frame as any).height);
+      }
+
       let result: any = null;
       try {
         result = detectPosePlugin.call(frame, {

@@ -38,16 +38,33 @@ const SKELETON_CONNECTIONS: [string, string][] = [
   ["leftEyePosition", "leftEarPosition"], ["rightEyePosition", "rightEarPosition"]
 ];
 
-const SkeletonPoints: React.FC<{ pose: any; width: number; height: number }> = ({ pose, width, height }) => {
+const SkeletonPoints: React.FC<{ pose: any; width: number; height: number; mirror: boolean }> = ({ pose, width, height, mirror }) => {
   if (!pose || !pose._hasData) return null;
-  // Coordenadas ya vienen normalizadas a 0-1 desde el worklet.
-  // Solo multiplicamos por dimensiones de pantalla.
+
+  // Transformación que respeta cover (crop) + mirror (cámara frontal).
+  // ML Kit devuelve píxeles en el sistema de coordenadas del frame.
+  // El preview de <Camera> usa resizeMode="cover" por defecto, así que el frame
+  // está recortado. Hay que escalar y centrar.
+  const srcW = pose._fw || 1080;
+  const srcH = pose._fh || 1920;
+  const scale = Math.max(width / srcW, height / srcH);
+  const offX = (srcW * scale - width) / 2;
+  const offY = (srcH * scale - height) / 2;
+
+  const toScreen = (x: number, y: number): { x: number; y: number } => {
+    let px = x * scale - offX;
+    const py = y * scale - offY;
+    if (mirror) px = width - px;
+    return { x: px, y: py };
+  };
 
   const getLM = (name: string): { x: number; y: number } | null => {
-    const x = pose[name + "_x"];
-    const y = pose[name + "_y"];
-    if (typeof x !== "number" || typeof y !== "number") return null;
-    return { x, y };
+    // Coordenadas ya normalizadas a 0-1 desde el worklet.
+    const nx = pose[name + "_x"];
+    const ny = pose[name + "_y"];
+    if (typeof nx !== "number" || typeof ny !== "number") return null;
+    // Desnormalizar a píxeles del frame, luego aplicar toScreen.
+    return toScreen(nx * srcW, ny * srcH);
   };
 
   const lmNames = [
@@ -77,16 +94,19 @@ const SkeletonPoints: React.FC<{ pose: any; width: number; height: number }> = (
     const la = getLM(a);
     const lb = getLM(b);
     if (!la || !lb) return null;
-    const x1 = la.x * width, y1 = la.y * height;
-    const x2 = lb.x * width, y2 = lb.y * height;
+    const x1 = la.x, y1 = la.y;
+    const x2 = lb.x, y2 = lb.y;
     const dx = x2 - x1, dy = y2 - y1;
     const length = Math.sqrt(dx * dx + dy * dy);
     if (length < 2) return null;
     const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    // Centrar la línea en el punto medio para que la rotación no la desplace.
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
     return (
       <View key={`ln-${i}`} style={{
-        position: "absolute", left: x1, top: y1 - 2, width: length, height: 4,
-        backgroundColor: "#ef4444", borderRadius: 2,
+        position: "absolute", left: midX - length / 2, top: midY - 2,
+        width: length, height: 4, backgroundColor: "#ef4444", borderRadius: 2,
         transform: [{ rotate: `${angle}deg` }]
       }} />
     );
@@ -395,7 +415,7 @@ export const CameraScreen: React.FC = () => {
 
       {/* Overlay de puntos del esqueleto */}
       {pose && pose._hasData ? (
-        <SkeletonPoints pose={pose} width={width} height={height} />
+        <SkeletonPoints pose={pose} width={width} height={height} mirror={cameraPosition === "front"} />
       ) : null}
 
       {/* Estado de pose detection */}

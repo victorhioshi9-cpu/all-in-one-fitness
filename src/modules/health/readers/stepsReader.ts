@@ -7,6 +7,7 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, sumAccumulables, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
+import { toMs } from "@/modules/intelligence/dateUtils";
 
 /**
  * @param dayIso 'YYYY-MM-DD'
@@ -20,8 +21,8 @@ export async function readStepsForDay(dayIso: string): Promise<HealthRecord | nu
     recordType: "Steps",
     sourceApp: extractSourceApp(r),
     day: dayIso,
-    startedAt: r.startTime,
-    endedAt: r.endTime,
+    startedAt: toMs(r.startTime),
+    endedAt: toMs(r.endTime),
     value: r.count ?? 0,
     unit: "steps",
     rawMeta: r.metadata

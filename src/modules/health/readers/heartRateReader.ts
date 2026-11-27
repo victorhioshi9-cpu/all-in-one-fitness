@@ -18,6 +18,7 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, averageHeartRate, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
+import { toMs } from "@/modules/intelligence/dateUtils";
 import { dayRange } from "./stepsReader";
 
 interface HrSample {
@@ -39,7 +40,7 @@ export async function readHeartRateSamplesForDay(dayIso: string): Promise<HrSamp
     const records = r.samples ?? [r];
     for (const s of records) {
       samples.push({
-        ts: s.time ?? r.startTime,
+        ts: toMs(s.time) || toMs(r.startTime),
         bpm: s.beatsPerMinute,
         sourceApp: extractSourceApp(r)
       });

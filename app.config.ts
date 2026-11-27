@@ -64,6 +64,7 @@ export default ({ config }) => ({
     ],
     "./plugins/fix-permissions-service",
     "./plugins/with-health-connect-queries",
+    "./plugins/with-health-connect-delegate",
     [
       "expo-build-properties",
       {

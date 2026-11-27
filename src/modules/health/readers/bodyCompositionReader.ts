@@ -28,6 +28,7 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
+import { toMs } from "@/modules/intelligence/dateUtils";
 import { dayRange } from "./stepsReader";
 
 export interface BodyComposition {
@@ -62,8 +63,8 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   const weightRecs: HealthRecord[] = rawWeight.map((r: any) => ({
     recordType: "Weight",
     sourceApp: extractSourceApp(r),
-    startedAt: r.time,
-    endedAt: r.time,
+    startedAt: toMs(r.time),
+    endedAt: toMs(r.time),
     value: r.weight?.value ?? r.weight?.inKilograms ?? 0,
     unit: "kg",
     rawMeta: r.metadata
@@ -71,8 +72,8 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   const fatRecs: HealthRecord[] = rawBodyFat.map((r: any) => ({
     recordType: "BodyFat",
     sourceApp: extractSourceApp(r),
-    startedAt: r.time,
-    endedAt: r.time,
+    startedAt: toMs(r.time),
+    endedAt: toMs(r.time),
     value: r.percentage ?? 0,
     unit: "%",
     rawMeta: r.metadata
@@ -80,8 +81,8 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   const heightRecs: HealthRecord[] = rawHeight.map((r: any) => ({
     recordType: "Height",
     sourceApp: extractSourceApp(r),
-    startedAt: r.time,
-    endedAt: r.time,
+    startedAt: toMs(r.time),
+    endedAt: toMs(r.time),
     value: r.height?.value ?? r.height?.inMeters ?? 0,
     unit: "m",
     rawMeta: r.metadata
