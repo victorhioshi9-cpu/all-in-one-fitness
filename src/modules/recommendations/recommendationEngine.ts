@@ -20,6 +20,7 @@ import { getDailyWater } from "@/modules/nutrition/foodRepo";
 import { readStepsForDay } from "@/modules/health/readers/stepsReader";
 import { openDatabase, queryAsync } from "@/modules/persistence/db";
 import { todayISO, daysAgoISO } from "@/modules/intelligence/dateUtils";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 export type RecommendationSeverity = "info" | "suggest" | "strong";
 
@@ -186,7 +187,7 @@ async function getFatiguedMuscles(daysBack: number): Promise<{ muscle: string; v
   const out: { muscle: string; volumeKg: number; fatigueScore: number }[] = [];
   for (let i = 0; i < daysBack; i++) {
     const d = new Date(today); d.setDate(today.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = toLocalISO(d);
     const rows = await queryAsync<{ muscle: string; vol: number }>(
       db,
       `SELECT e.primary_muscle as muscle, SUM(s.volume_kg) as vol

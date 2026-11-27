@@ -7,6 +7,7 @@
  */
 import { openDatabase, queryAsync, execAsync } from "@/modules/persistence/db";
 import { PRELOAD_FOODS, PRELOAD_COMBOS, type FoodTemplate } from "./foodTemplates";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 export interface FoodRow {
   id: string;
@@ -139,7 +140,7 @@ export async function logFood(input: FoodLogInput): Promise<FoodLogResult> {
 
   const id = `log_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const now = Date.now();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalISO(new Date());
   await execAsync(
     db,
     `INSERT INTO nutrition_logs
@@ -158,7 +159,7 @@ export async function getDailyMacros(dayIso?: string): Promise<{
   kcal: number; protein_g: number; carbs_g: number; fat_g: number; fiber_g: number;
   entries: any[];
 }> {
-  const day = dayIso ?? new Date().toISOString().slice(0, 10);
+  const day = dayIso ?? toLocalISO(new Date());
   const db = await openDatabase();
   const rows = await queryAsync<any>(
     db,
@@ -180,7 +181,7 @@ export async function addWater(ml: number): Promise<void> {
   const db = await openDatabase();
   const id = `w_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const now = Date.now();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toLocalISO(new Date());
   await execAsync(
     db,
     `INSERT INTO hydration_logs (id, day, ml, logged_at, created_at, updated_at, synced_at)
@@ -190,7 +191,7 @@ export async function addWater(ml: number): Promise<void> {
 }
 
 export async function getDailyWater(dayIso?: string): Promise<number> {
-  const day = dayIso ?? new Date().toISOString().slice(0, 10);
+  const day = dayIso ?? toLocalISO(new Date());
   const db = await openDatabase();
   const rows = await queryAsync<{ total: number | null }>(
     db,
@@ -202,7 +203,7 @@ export async function getDailyWater(dayIso?: string): Promise<number> {
 
 /** Suplementos diarios. */
 export async function getDailySupplements(dayIso?: string): Promise<any[]> {
-  const day = dayIso ?? new Date().toISOString().slice(0, 10);
+  const day = dayIso ?? toLocalISO(new Date());
   const db = await openDatabase();
   return queryAsync<any>(
     db,

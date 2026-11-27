@@ -16,6 +16,7 @@ import { readSleepForDay } from "@/modules/health/readers/sleepReader";
 import { readRestingHeartRate } from "@/modules/health/readers/heartRateReader";
 import { openDatabase, queryAsync } from "@/modules/persistence/db";
 import { yesterdayISO, todayISO } from "./dateUtils";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 export interface ReadinessFactor {
   key: "sleep" | "restingHr" | "muscleFatigue";
@@ -132,7 +133,7 @@ async function computeBaselineRestingHr(daysBack: number): Promise<number | null
   for (let i = 1; i <= daysBack; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = toLocalISO(d);
     const r = await readRestingHeartRate(iso);
     if (r !== null) samples.push(r);
   }

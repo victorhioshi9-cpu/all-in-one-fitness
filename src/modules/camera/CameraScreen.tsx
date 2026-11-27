@@ -17,6 +17,7 @@ import {
   ActivityIndicator, Linking, Alert, TextInput, Keyboard, AppState
 } from "react-native";
 import { Camera, useCameraPermission, useCameraDevice } from "react-native-vision-camera";
+import { useIsFocused } from "@react-navigation/native";
 import { useKeepAwake } from "expo-keep-awake";
 
 import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/exercisePresets";
@@ -39,32 +40,26 @@ const SKELETON_CONNECTIONS: [string, string][] = [
 ];
 
 const SkeletonPoints: React.FC<{ pose: any; width: number; height: number; mirror: boolean }> = ({ pose, width, height, mirror }) => {
-  if (!pose || !pose._hasData) return null;
+  if (!pose || !pose._hasData || width <= 0 || height <= 0) return null;
 
-  // Transformación que respeta cover (crop) + mirror (cámara frontal).
-  // ML Kit devuelve píxeles en el sistema de coordenadas del frame.
-  // El preview de <Camera> usa resizeMode="cover" por defecto, así que el frame
-  // está recortado. Hay que escalar y centrar.
-  const srcW = pose._fw || 1080;
-  const srcH = pose._fh || 1920;
+  // Tamaño REAL del frame (vertical), enviado por el worklet.
+  const srcW: number = pose._frameW || 480;
+  const srcH: number = pose._frameH || 640;
+
+  // <Camera> usa resizeMode="cover": el frame se escala hasta CUBRIR la vista
+  // y se recorta lo que sobra, centrado. Replicamos exactamente esa transformación.
   const scale = Math.max(width / srcW, height / srcH);
   const offX = (srcW * scale - width) / 2;
   const offY = (srcH * scale - height) / 2;
 
-  const toScreen = (x: number, y: number): { x: number; y: number } => {
+  const getLM = (name: string): { x: number; y: number } | null => {
+    const x = pose[name + "_x"];
+    const y = pose[name + "_y"];
+    if (typeof x !== "number" || typeof y !== "number") return null;
     let px = x * scale - offX;
     const py = y * scale - offY;
-    if (mirror) px = width - px;
+    if (mirror) px = width - px; // cámara frontal = espejo
     return { x: px, y: py };
-  };
-
-  const getLM = (name: string): { x: number; y: number } | null => {
-    // Coordenadas ya normalizadas a 0-1 desde el worklet.
-    const nx = pose[name + "_x"];
-    const ny = pose[name + "_y"];
-    if (typeof nx !== "number" || typeof ny !== "number") return null;
-    // Desnormalizar a píxeles del frame, luego aplicar toScreen.
-    return toScreen(nx * srcW, ny * srcH);
   };
 
   const lmNames = [
@@ -83,7 +78,7 @@ const SkeletonPoints: React.FC<{ pose: any; width: number; height: number; mirro
     if (!lm) return null;
     return (
       <View key={`pt-${name}`} style={{
-        position: "absolute", left: lm.x * width - 6, top: lm.y * height - 6,
+        position: "absolute", left: lm.x - 6, top: lm.y - 6,
         width: 12, height: 12, borderRadius: 6, backgroundColor: "#fbbf24",
         borderWidth: 2, borderColor: "#fff"
       }} />
@@ -94,19 +89,17 @@ const SkeletonPoints: React.FC<{ pose: any; width: number; height: number; mirro
     const la = getLM(a);
     const lb = getLM(b);
     if (!la || !lb) return null;
-    const x1 = la.x, y1 = la.y;
-    const x2 = lb.x, y2 = lb.y;
-    const dx = x2 - x1, dy = y2 - y1;
+    const dx = lb.x - la.x, dy = lb.y - la.y;
     const length = Math.sqrt(dx * dx + dy * dy);
     if (length < 2) return null;
     const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-    // Centrar la línea en el punto medio para que la rotación no la desplace.
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2;
+    // React Native rota alrededor del CENTRO de la vista: se coloca la línea
+    // centrada en el punto medio del segmento (antes quedaba desplazada).
+    const midX = (la.x + lb.x) / 2, midY = (la.y + lb.y) / 2;
     return (
       <View key={`ln-${i}`} style={{
-        position: "absolute", left: midX - length / 2, top: midY - 2,
-        width: length, height: 4, backgroundColor: "#ef4444", borderRadius: 2,
+        position: "absolute", left: midX - length / 2, top: midY - 2, width: length, height: 4,
+        backgroundColor: "#ef4444", borderRadius: 2,
         transform: [{ rotate: `${angle}deg` }]
       }} />
     );
@@ -152,6 +145,28 @@ export const CameraScreen: React.FC = () => {
   // Útil para forzar re-inicialización cuando la cámara se queda colgada.
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Tamaño REAL del contenedor de la cámara (no el de la ventana: hay header y tab bar).
+  const [box, setBox] = useState({ w: width, h: height });
+  // La cámara solo debe estar activa si la pestaña está visible y la app en primer plano.
+  const isFocused = useIsFocused();
+  const [appActive, setAppActive] = useState(AppState.currentState === "active");
+  const lastCamErrRef = useRef(0);
+
+  // Al volver a esta pestaña, re-montar la cámara (evita que se quede colgada).
+  useEffect(() => {
+    if (isFocused) setReloadKey((k) => k + 1);
+  }, [isFocused]);
+
+  // Si VisionCamera reporta un error, re-montar (máx. 1 vez cada 3 s).
+  const handleCameraError = (e: any) => {
+    console.warn("[Camera] onError:", e?.code, e?.message);
+    const now = Date.now();
+    if (now - lastCamErrRef.current > 3000) {
+      lastCamErrRef.current = now;
+      setReloadKey((k) => k + 1);
+    }
+  };
+
   // AppState listener: al volver a la app DESDE BACKGROUND (no desde inactive),
   // re-montar la cámara. Solo disparamos en transición background→active,
   // NO en inactive→active (eso pasa al abrir modals/alerts y causaría recargas
@@ -161,6 +176,7 @@ export const CameraScreen: React.FC = () => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
       const prev = appStateRef.current;
       appStateRef.current = nextAppState;
+      setAppActive(nextAppState === "active");
       // SOLO recargar si venimos de "background" (la app estuvo en segundo plano).
       // "inactive" es transitorio (modal, alert) y NO debe recargar la cámara.
       if (prev === "background" && nextAppState === "active") {
@@ -178,7 +194,7 @@ export const CameraScreen: React.FC = () => {
   // Si se activa y la app crashea, sabremos que el problema es el plugin nativo.
   // --- Pose detection con Google ML Kit ---
   // Hook se llama SIEMPRE (reglas de hooks). El parámetro 'active' controla.
-  const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking");
+  const { pose, fps, frameProcessor, isAvailable: poseAvailable } = usePoseDetection(mode === "tracking" && isFocused && appActive);
 
   // --- Contador automático de reps (heurística por altura de cadera) ---
   const lastHipYRef = useRef<number | null>(null);
@@ -190,8 +206,7 @@ export const CameraScreen: React.FC = () => {
     const lhY = pose.leftHipPosition_y;
     const rhY = pose.rightHipPosition_y;
     if (typeof lhY !== "number" || typeof rhY !== "number") return;
-    // Coordenadas ya normalizadas a 0-1 desde el worklet.
-    const hipY = (lhY + rhY) / 2;
+    const hipY = ((lhY + rhY) / 2) / (pose._frameH || 640);
     if (typeof hipY !== "number" || isNaN(hipY)) return;
 
     const last = lastHipYRef.current;
@@ -290,6 +305,17 @@ export const CameraScreen: React.FC = () => {
       <View style={styles.center}>
         <ActivityIndicator color={colors.accent} />
         <Text style={{ color: colors.textMuted, marginTop: spacing.md }}>Buscando cámara…</Text>
+        <Pressable
+          style={[styles.btn, { marginTop: spacing.md }]}
+          onPress={() => {
+            // Fuerza a useCameraDevice a volver a consultar los dispositivos.
+            setCameraPosition((p) => (p === "back" ? "front" : "back"));
+            setTimeout(() => setCameraPosition("back"), 400);
+            setReloadKey((k) => k + 1);
+          }}
+        >
+          <Text style={styles.btnText}>Reintentar</Text>
+        </Pressable>
       </View>
     );
   }
@@ -401,12 +427,18 @@ export const CameraScreen: React.FC = () => {
 
   // --- Render: tracking (preview de cámara + pose detection ML Kit) ---
   return (
-    <View key={reloadKey} style={styles.trackingContainer}>
+    <View
+      key={reloadKey}
+      style={styles.trackingContainer}
+      onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+    >
       <Camera
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={mode === "tracking"}
+        isActive={mode === "tracking" && isFocused && appActive}
+        resizeMode="cover"
+        onError={handleCameraError}
         photo={false}
         video={false}
         audio={false}
@@ -415,7 +447,7 @@ export const CameraScreen: React.FC = () => {
 
       {/* Overlay de puntos del esqueleto */}
       {pose && pose._hasData ? (
-        <SkeletonPoints pose={pose} width={width} height={height} mirror={cameraPosition === "front"} />
+        <SkeletonPoints pose={pose} width={box.w} height={box.h} mirror={cameraPosition === "front"} />
       ) : null}
 
       {/* Estado de pose detection */}

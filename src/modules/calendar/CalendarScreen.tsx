@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { colors, spacing, radius } from "@/theme/colors";
 import { openDatabase, queryAsync, execAsync } from "@/modules/persistence/db";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 type ViewMode = "month" | "week";
 
@@ -48,7 +49,7 @@ export const CalendarScreen: React.FC = () => {
     const db = await openDatabase();
     for (let i = 0; i < count; i++) {
       const d = new Date(start); d.setDate(start.getDate() + i);
-      const iso = d.toISOString().slice(0, 10);
+      const iso = toLocalISO(d);
       const row = await queryAsync<any>(
         db,
         `SELECT * FROM calendar_days WHERE day = ?`,
@@ -59,7 +60,7 @@ export const CalendarScreen: React.FC = () => {
         `SELECT * FROM planned_sessions WHERE day = ? AND status = 'planned'`,
         [iso]
       );
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toLocalISO(new Date());
       const compliance: DayCell["compliance"] =
         planned.length > 0 && iso >= today ? "planned" :
         iso > today ? "future" :
@@ -145,7 +146,7 @@ export const CalendarScreen: React.FC = () => {
                 { backgroundColor: complianceColor(d.compliance) + "22", borderColor: complianceColor(d.compliance) }
               ]}
               onPress={() => {
-                if (d.day >= new Date().toISOString().slice(0, 10)) {
+                if (d.day >= toLocalISO(new Date())) {
                   setPlannedModal(d.day);
                 }
               }}

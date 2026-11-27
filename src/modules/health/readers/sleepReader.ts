@@ -39,6 +39,17 @@ const STAGE_TO_FIELD: Record<string, keyof SleepSummary> = {
   "STAGE_TYPE_SLEEPING": "asleepMs"
 };
 
+// HC v3.x devuelve la etapa como número (enum SleepStageType).
+const NUM_STAGE: Record<number, string> = {
+  1: "STAGE_TYPE_AWAKE",
+  2: "STAGE_TYPE_SLEEPING",
+  3: "STAGE_TYPE_OUT_OF_BED",
+  4: "STAGE_TYPE_LIGHT",
+  5: "STAGE_TYPE_DEEP",
+  6: "STAGE_TYPE_REM",
+  7: "STAGE_TYPE_AWAKE"
+};
+
 /**
  * Lee el sueño "de anoche": la SleepSession que termina hoy.
  * HC suele escribir la sesión completa al despertar; por eso consultamos
@@ -96,8 +107,9 @@ export async function readSleepForDay(wokeDayIso: string): Promise<SleepSummary 
   // Procesar stages
   const stages = mainRaw?.stages ?? [];
   for (const stage of stages) {
-    const dur = (stage.endTime ?? 0) - (stage.startTime ?? 0);
-    const field = STAGE_TO_FIELD[stage.stage ?? ""] ?? STAGE_TO_FIELD["STAGE_TYPE_SLEEPING"];
+    const dur = Math.max(0, (Number(stage.endTime) || 0) - (Number(stage.startTime) || 0));
+    const stageKey = typeof stage.stage === "number" ? (NUM_STAGE[stage.stage] ?? "") : (stage.stage ?? "");
+    const field = STAGE_TO_FIELD[stageKey] ?? STAGE_TO_FIELD["STAGE_TYPE_SLEEPING"];
     if (field === "asleepMs") {
       // Si es genérico SLEEPING, suma a asleepMs pero no a light/deep/rem
       summary.asleepMs += dur;

@@ -13,6 +13,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { colors, spacing, radius } from "@/theme/colors";
 import { openDatabase, queryAsync, execAsync } from "@/modules/persistence/db";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 // ============================================================================
 // SetStateTag
@@ -205,7 +206,7 @@ export const MuscleHeatMap: React.FC = () => {
       const days: string[] = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(today); d.setDate(today.getDate() - i);
-        days.push(d.toISOString().slice(0, 10));
+        days.push(toLocalISO(d));
       }
       // Para cada día, suma volumen por músculo
       const muscleMap = new Map<string, number[]>();

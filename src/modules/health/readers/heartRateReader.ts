@@ -18,7 +18,6 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, averageHeartRate, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
-import { toMs } from "@/modules/intelligence/dateUtils";
 import { dayRange } from "./stepsReader";
 
 interface HrSample {
@@ -40,7 +39,7 @@ export async function readHeartRateSamplesForDay(dayIso: string): Promise<HrSamp
     const records = r.samples ?? [r];
     for (const s of records) {
       samples.push({
-        ts: toMs(s.time) || toMs(r.startTime),
+        ts: s.time ?? r.startTime,
         bpm: s.beatsPerMinute,
         sourceApp: extractSourceApp(r)
       });
@@ -58,10 +57,10 @@ export async function readRestingHeartRate(dayIso: string): Promise<number | nul
   if (samples.length === 0) return null;
 
   // Filtrar ventana 4-10h local (timezone del dispositivo)
+  // `T00:00:00` sin zona ya es medianoche LOCAL: no hay que restar el offset.
   const dayStart = new Date(`${dayIso}T00:00:00`);
-  const tzOffsetMin = dayStart.getTimezoneOffset();
-  const lowerBound = dayStart.getTime() + 4 * 3600_000 - tzOffsetMin * 60_000;
-  const upperBound = dayStart.getTime() + 10 * 3600_000 - tzOffsetMin * 60_000;
+  const lowerBound = dayStart.getTime() + 4 * 3600_000;
+  const upperBound = dayStart.getTime() + 10 * 3600_000;
 
   const restingSamples = samples
     .filter((s) => s.ts >= lowerBound && s.ts <= upperBound)

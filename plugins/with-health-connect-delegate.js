@@ -21,7 +21,7 @@
 const { withMainActivity } = require("expo/config-plugins");
 
 const DELEGATE_LINE = "HealthConnectPermissionDelegate.setPermissionDelegate(this)";
-const DELEGATE_IMPORT = "import androidx.health.connect.client.permission.HealthConnectPermissionDelegate";
+const DELEGATE_IMPORT = "import dev.matinzd.healthconnect.permissions.HealthConnectPermissionDelegate";
 
 module.exports = function withHealthConnectDelegate(config) {
   return withMainActivity(config, (cfg) => {

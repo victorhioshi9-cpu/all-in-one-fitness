@@ -28,8 +28,8 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
-import { toMs } from "@/modules/intelligence/dateUtils";
 import { dayRange } from "./stepsReader";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 export interface BodyComposition {
   measuredAt: number;
@@ -63,8 +63,8 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   const weightRecs: HealthRecord[] = rawWeight.map((r: any) => ({
     recordType: "Weight",
     sourceApp: extractSourceApp(r),
-    startedAt: toMs(r.time),
-    endedAt: toMs(r.time),
+    startedAt: r.time,
+    endedAt: r.time,
     value: r.weight?.value ?? r.weight?.inKilograms ?? 0,
     unit: "kg",
     rawMeta: r.metadata
@@ -72,8 +72,8 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   const fatRecs: HealthRecord[] = rawBodyFat.map((r: any) => ({
     recordType: "BodyFat",
     sourceApp: extractSourceApp(r),
-    startedAt: toMs(r.time),
-    endedAt: toMs(r.time),
+    startedAt: r.time,
+    endedAt: r.time,
     value: r.percentage ?? 0,
     unit: "%",
     rawMeta: r.metadata
@@ -81,8 +81,8 @@ export async function readBodyCompositionForDay(dayIso: string): Promise<BodyCom
   const heightRecs: HealthRecord[] = rawHeight.map((r: any) => ({
     recordType: "Height",
     sourceApp: extractSourceApp(r),
-    startedAt: toMs(r.time),
-    endedAt: toMs(r.time),
+    startedAt: r.time,
+    endedAt: r.time,
     value: r.height?.value ?? r.height?.inMeters ?? 0,
     unit: "m",
     rawMeta: r.metadata
@@ -157,7 +157,7 @@ export async function readWeightHistory(daysBack: number = 30): Promise<{ day: s
   for (let i = 0; i < daysBack; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = toLocalISO(d);
     const bc = await readBodyCompositionForDay(iso);
     if (bc?.weightKg) {
       out.push({ day: iso, weightKg: bc.weightKg, measuredAt: bc.measuredAt });

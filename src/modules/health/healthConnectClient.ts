@@ -39,6 +39,35 @@ const HC_PLAY_STORE_PACKAGE = "com.google.android.apps.healthdata";
 const HC_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${HC_PLAY_STORE_PACKAGE}`;
 const HC_MARKET_URL = `market://details?id=${HC_PLAY_STORE_PACKAGE}`;
 
+/** Convierte strings ISO (lo que devuelve HC v3.2) a ms epoch; deja pasar números. */
+function toMs(v: any): any {
+  if (typeof v !== "string") return v;
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? v : t;
+}
+
+/**
+ * Normaliza un record crudo de HC: startTime/endTime/time, samples[].time y
+ * stages[].startTime/endTime pasan a ms epoch (number). Así todos los readers
+ * y dedupeBySource trabajan con números (antes daba NaN y se perdían records).
+ */
+function normalizeRecord(r: any): any {
+  if (!r || typeof r !== "object") return r;
+  const out: any = { ...r };
+  for (const k of ["startTime", "endTime", "time"]) {
+    if (k in out) out[k] = toMs(out[k]);
+  }
+  if (Array.isArray(out.samples)) {
+    out.samples = out.samples.map((x: any) => ({ ...x, time: toMs(x?.time) }));
+  }
+  if (Array.isArray(out.stages)) {
+    out.stages = out.stages.map((x: any) => ({
+      ...x, startTime: toMs(x?.startTime), endTime: toMs(x?.endTime)
+    }));
+  }
+  return out;
+}
+
 /** Timeout para requestPermission: si HC no responde en 30s, rechazamos el Promise. */
 const PERMISSION_TIMEOUT_MS = 30_000;
 
@@ -332,7 +361,7 @@ export async function readHcRecords(
       },
       ...(extraOps ?? {})
     });
-    const records = Array.isArray(result) ? result : (result?.records ?? []);
+    const records = (Array.isArray(result) ? result : (result?.records ?? [])).map(normalizeRecord);
     console.log(`[healthConnect] readHcRecords(${recordType}) → ${records.length} registros`);
     return records;
   } catch (err) {

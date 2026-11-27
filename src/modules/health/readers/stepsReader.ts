@@ -7,7 +7,7 @@
 import { readHcRecords } from "../healthConnectClient";
 import { extractSourceApp, sumAccumulables, dedupeBySource } from "../sourceFilter";
 import type { HealthRecord } from "../types";
-import { toMs } from "@/modules/intelligence/dateUtils";
+import { toLocalISO, parseLocalISO } from "@/modules/intelligence/dateUtils";
 
 /**
  * @param dayIso 'YYYY-MM-DD'
@@ -21,8 +21,8 @@ export async function readStepsForDay(dayIso: string): Promise<HealthRecord | nu
     recordType: "Steps",
     sourceApp: extractSourceApp(r),
     day: dayIso,
-    startedAt: toMs(r.startTime),
-    endedAt: toMs(r.endTime),
+    startedAt: r.startTime,
+    endedAt: r.endTime,
     value: r.count ?? 0,
     unit: "steps",
     rawMeta: r.metadata
@@ -38,10 +38,10 @@ export async function readStepsForDay(dayIso: string): Promise<HealthRecord | nu
 
 export async function readStepsRange(startDayIso: string, endDayIso: string): Promise<HealthRecord[]> {
   const out: HealthRecord[] = [];
-  let cursor = new Date(startDayIso);
-  const end = new Date(endDayIso);
+  let cursor = parseLocalISO(startDayIso);
+  const end = parseLocalISO(endDayIso);
   while (cursor <= end) {
-    const iso = cursor.toISOString().slice(0, 10);
+    const iso = toLocalISO(cursor);
     const r = await readStepsForDay(iso);
     if (r) out.push(r);
     cursor.setDate(cursor.getDate() + 1);

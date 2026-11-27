@@ -13,6 +13,7 @@ import {
 import { colors, spacing, radius } from "@/theme/colors";
 import { openDatabase, queryAsync, execAsync } from "@/modules/persistence/db";
 import { computeWeightTrend } from "@/modules/intelligence/weightTrend";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 const GOAL_OPTIONS = [
   { value: "deficit", label: "Déficit", color: colors.ok },
@@ -57,7 +58,7 @@ export const PeriodizationScreen: React.FC = () => {
          target_steps_per_day, target_protein_g_kg, target_volume_kg_week,
          notes, is_active, created_at, updated_at, synced_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?, NULL)`,
-      [id, form.name, form.goal, new Date().toISOString().slice(0, 10), parseInt(form.weeks),
+      [id, form.name, form.goal, toLocalISO(new Date()), parseInt(form.weeks),
        form.target_weight_kg ? parseFloat(form.target_weight_kg) : null,
        parseFloat(form.target_weekly_kcal),
        parseInt(form.target_steps_per_day),

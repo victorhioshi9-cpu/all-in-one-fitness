@@ -181,6 +181,8 @@ module.exports = function withHealthConnectQueries(config) {
       "android.permission.health.READ_HEART_RATE_VARIABILITY",
       "android.permission.health.READ_HYDRATION",
       "android.permission.health.READ_EXERCISE",
+      "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
+      "android.permission.health.READ_HEALTH_DATA_HISTORY",
       // Write permissions (todas las que pedimos en app.config.ts writeTypes)
       "android.permission.health.WRITE_EXERCISE",
       "android.permission.health.WRITE_ACTIVE_CALORIES_BURNED",

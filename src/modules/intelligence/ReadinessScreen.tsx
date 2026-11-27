@@ -30,6 +30,7 @@ import {
   detectBodyCompAlerts,
   type BodyCompAlert
 } from "@/modules/intelligence/bodyCompAlerts";
+import { toLocalISO } from "@/modules/intelligence/dateUtils";
 
 export const ReadinessScreen: React.FC = () => {
   const [ready, setReady] = useState<ReadinessResult | null>(null);
@@ -45,7 +46,7 @@ export const ReadinessScreen: React.FC = () => {
     try {
       const [r, t, w, tr, al] = await Promise.all([
         computeReadiness(),
-        computeDayEnergyBalance(new Date().toISOString().slice(0, 10)),
+        computeDayEnergyBalance(toLocalISO(new Date())),
         computeWeeklyEnergyBalance(),
         computeWeightTrend(),
         detectBodyCompAlerts()
