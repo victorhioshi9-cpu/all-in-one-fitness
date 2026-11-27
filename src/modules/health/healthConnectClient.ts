@@ -312,13 +312,19 @@ export async function readHcRecords(
   extraOps?: Record<string, any>
 ): Promise<any[]> {
   try {
-    const { readRecords } = require("react-native-health-connect");
-    // SDK v3.2 espera startTime/endTime como String ISO 8601, NO como número.
-    // Error: "Value for startTime cannot be cast from Double to String"
+    const hc = require("react-native-health-connect");
+
+    // INICIALIZAR el SDK antes de leer. Sin esto: "client is not initialized".
+    if (!_initialized) {
+      try { await hc.initialize(); } catch { /* idempotente */ }
+      _initialized = true;
+    }
+
+    // SDK v3.2 espera startTime/endTime como String ISO 8601.
     const startISO = new Date(startTimeEpochMs).toISOString();
     const endISO = new Date(endTimeEpochMs).toISOString();
     console.log(`[healthConnect] readHcRecords(${recordType}) range: ${startISO} → ${endISO}`);
-    const result = await readRecords(recordType, {
+    const result = await hc.readRecords(recordType, {
       timeRangeFilter: {
         operator: "between",
         startTime: startISO,
