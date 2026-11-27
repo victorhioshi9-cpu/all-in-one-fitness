@@ -189,7 +189,14 @@ module.exports = function withHealthConnectQueries(config) {
       "android.permission.health.WRITE_WEIGHT",
       "android.permission.health.WRITE_HEART_RATE",
       "android.permission.health.WRITE_SLEEP",
-      "android.permission.health.WRITE_HYDRATION"
+      "android.permission.health.WRITE_HYDRATION",
+      // Permisos avanzados (báscula S400 los escribe vía Mi Fitness)
+      "android.permission.health.READ_BODY_WATER_MASS",
+      "android.permission.health.READ_BONE_MASS",
+      "android.permission.health.READ_LEAN_BODY_MASS",
+      "android.permission.health.WRITE_BODY_WATER_MASS",
+      "android.permission.health.WRITE_BONE_MASS",
+      "android.permission.health.WRITE_LEAN_BODY_MASS"
     ];
 
     // Asegurar que manifest tiene array 'uses-permission'

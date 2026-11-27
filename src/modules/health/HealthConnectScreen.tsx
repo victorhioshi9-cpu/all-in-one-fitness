@@ -288,7 +288,7 @@ export const HealthConnectScreen: React.FC = () => {
             <View style={styles.metricCard}>
               <Text style={styles.metricEmoji}>😴</Text>
               <Text style={styles.metricValue}>
-                {todayMetrics.sleep ? `${(todayMetrics.sleep.asleepMs / 3600000).toFixed(1)}h` : "—"}
+                {todayMetrics.sleep && typeof todayMetrics.sleep.asleepMs === "number" && !isNaN(todayMetrics.sleep.asleepMs) ? `${(todayMetrics.sleep.asleepMs / 3600000).toFixed(1)}h` : "—"}
               </Text>
               <Text style={styles.metricLabel}>Sueño</Text>
             </View>
@@ -348,7 +348,7 @@ export const HealthConnectScreen: React.FC = () => {
                   else if (todayMetrics.rhr < 60) tips.push(`✅ FC reposo baja (${todayMetrics.rhr} bpm). Buen estado cardiovascular.`);
                   else tips.push(`✅ FC reposo normal (${todayMetrics.rhr} bpm)`);
                 }
-                if (todayMetrics.sleep) {
+                if (todayMetrics.sleep && typeof todayMetrics.sleep.asleepMs === "number" && !isNaN(todayMetrics.sleep.asleepMs)) {
                   const sleepH = todayMetrics.sleep.asleepMs / 3600000;
                   if (sleepH < 6) tips.push(`⚠️ Solo ${sleepH.toFixed(1)}h de sueño. Necesitas dormir más.`);
                   else if (sleepH >= 7) tips.push(`✅ ${sleepH.toFixed(1)}h de sueño. Buena recuperación.`);

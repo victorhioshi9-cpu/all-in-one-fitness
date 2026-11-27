@@ -23,6 +23,85 @@ import { EXERCISE_PRESETS, type ExercisePreset } from "@/modules/biomechanics/ex
 import { colors, spacing, radius } from "@/theme/colors";
 import { usePoseDetection } from "./hooks/usePoseDetection";
 
+// ============================================================================
+// SkeletonPoints — DEBE definirse ANTES de CameraScreen (const no se hoistinga)
+// ============================================================================
+const SKELETON_CONNECTIONS: [string, string][] = [
+  ["leftShoulderPosition", "rightShoulderPosition"],
+  ["leftShoulderPosition", "leftElbowPosition"], ["leftElbowPosition", "leftWristPosition"],
+  ["rightShoulderPosition", "rightElbowPosition"], ["rightElbowPosition", "rightWristPosition"],
+  ["leftShoulderPosition", "leftHipPosition"], ["rightShoulderPosition", "rightHipPosition"],
+  ["leftHipPosition", "rightHipPosition"],
+  ["leftHipPosition", "leftKneePosition"], ["leftKneePosition", "leftAnklePosition"],
+  ["rightHipPosition", "rightKneePosition"], ["rightKneePosition", "rightAnklePosition"],
+  ["nosePosition", "leftEyePosition"], ["nosePosition", "rightEyePosition"],
+  ["leftEyePosition", "leftEarPosition"], ["rightEyePosition", "rightEarPosition"]
+];
+
+const SkeletonPoints: React.FC<{ pose: any; width: number; height: number }> = ({ pose, width, height }) => {
+  if (!pose || !pose._hasData) return null;
+  const FRAME_W = 1080;
+  const FRAME_H = 1920;
+  const scaleX = width / FRAME_W;
+  const scaleY = height / FRAME_H;
+
+  const getLM = (name: string): { x: number; y: number } | null => {
+    const x = pose[name + "_x"];
+    const y = pose[name + "_y"];
+    if (typeof x !== "number" || typeof y !== "number") return null;
+    return { x, y };
+  };
+
+  const lmNames = [
+    "leftShoulderPosition", "rightShoulderPosition",
+    "leftElbowPosition", "rightElbowPosition",
+    "leftWristPosition", "rightWristPosition",
+    "leftHipPosition", "rightHipPosition",
+    "leftKneePosition", "rightKneePosition",
+    "leftAnklePosition", "rightAnklePosition",
+    "nosePosition", "leftEyePosition", "rightEyePosition",
+    "leftEarPosition", "rightEarPosition"
+  ];
+
+  const points: React.ReactNode[] = lmNames.map((name) => {
+    const lm = getLM(name);
+    if (!lm) return null;
+    return (
+      <View key={`pt-${name}`} style={{
+        position: "absolute", left: lm.x * scaleX - 6, top: lm.y * scaleY - 6,
+        width: 12, height: 12, borderRadius: 6, backgroundColor: "#fbbf24",
+        borderWidth: 2, borderColor: "#fff"
+      }} />
+    );
+  }).filter(Boolean);
+
+  const lines: React.ReactNode[] = SKELETON_CONNECTIONS.map(([a, b], i) => {
+    const la = getLM(a);
+    const lb = getLM(b);
+    if (!la || !lb) return null;
+    const x1 = la.x * scaleX, y1 = la.y * scaleY;
+    const x2 = lb.x * scaleX, y2 = lb.y * scaleY;
+    const dx = x2 - x1, dy = y2 - y1;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    if (length < 2) return null;
+    const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    return (
+      <View key={`ln-${i}`} style={{
+        position: "absolute", left: x1, top: y1 - 2, width: length, height: 4,
+        backgroundColor: "#ef4444", borderRadius: 2,
+        transform: [{ rotate: `${angle}deg` }]
+      }} />
+    );
+  }).filter(Boolean);
+
+  return (
+    <View style={{ position: "absolute", top: 0, left: 0, width, height }} pointerEvents="none">
+      {lines}
+      {points}
+    </View>
+  );
+};
+
 type Mode = "select_exercise" | "tracking";
 
 type ExerciseCategory = ExercisePreset["category"];
