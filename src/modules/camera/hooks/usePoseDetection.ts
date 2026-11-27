@@ -95,8 +95,14 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
         return;
       }
 
-      // APLANAR: extraer coordenadas como números sueltos.
-      const flat: any = { _hasData: 0, _landmarkCount: 0 };
+      // APLANAR y NORMALIZAR coordenadas a 0-1 usando dimensiones reales del frame.
+      // ML Kit devuelve píxeles del frame original. frame.width/height nos dan
+      // las dimensiones reales. Normalizamos a 0-1 para que el overlay pueda
+      // escalar a cualquier pantalla sin adivinar dimensiones.
+      const fw = (frame as any).width || 1080;
+      const fh = (frame as any).height || 1920;
+
+      const flat: any = { _hasData: 0, _landmarkCount: 0, _fw: fw, _fh: fh };
       let count = 0;
 
       for (let i = 0; i < LANDMARK_KEYS.length; i++) {
@@ -106,8 +112,9 @@ export function usePoseDetection(active: boolean): UsePoseDetectionResult {
           const x = lm.x;
           const y = lm.y;
           if (typeof x === "number" && typeof y === "number") {
-            flat[key + "_x"] = x;
-            flat[key + "_y"] = y;
+            // Normalizar a 0-1 dividiendo por dimensiones del frame.
+            flat[key + "_x"] = x / fw;
+            flat[key + "_y"] = y / fh;
             count++;
           }
         }

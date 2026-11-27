@@ -40,10 +40,8 @@ const SKELETON_CONNECTIONS: [string, string][] = [
 
 const SkeletonPoints: React.FC<{ pose: any; width: number; height: number }> = ({ pose, width, height }) => {
   if (!pose || !pose._hasData) return null;
-  const FRAME_W = 1080;
-  const FRAME_H = 1920;
-  const scaleX = width / FRAME_W;
-  const scaleY = height / FRAME_H;
+  // Coordenadas ya vienen normalizadas a 0-1 desde el worklet.
+  // Solo multiplicamos por dimensiones de pantalla.
 
   const getLM = (name: string): { x: number; y: number } | null => {
     const x = pose[name + "_x"];
@@ -68,7 +66,7 @@ const SkeletonPoints: React.FC<{ pose: any; width: number; height: number }> = (
     if (!lm) return null;
     return (
       <View key={`pt-${name}`} style={{
-        position: "absolute", left: lm.x * scaleX - 6, top: lm.y * scaleY - 6,
+        position: "absolute", left: lm.x * width - 6, top: lm.y * height - 6,
         width: 12, height: 12, borderRadius: 6, backgroundColor: "#fbbf24",
         borderWidth: 2, borderColor: "#fff"
       }} />
@@ -79,8 +77,8 @@ const SkeletonPoints: React.FC<{ pose: any; width: number; height: number }> = (
     const la = getLM(a);
     const lb = getLM(b);
     if (!la || !lb) return null;
-    const x1 = la.x * scaleX, y1 = la.y * scaleY;
-    const x2 = lb.x * scaleX, y2 = lb.y * scaleY;
+    const x1 = la.x * width, y1 = la.y * height;
+    const x2 = lb.x * width, y2 = lb.y * height;
     const dx = x2 - x1, dy = y2 - y1;
     const length = Math.sqrt(dx * dx + dy * dy);
     if (length < 2) return null;
@@ -172,7 +170,8 @@ export const CameraScreen: React.FC = () => {
     const lhY = pose.leftHipPosition_y;
     const rhY = pose.rightHipPosition_y;
     if (typeof lhY !== "number" || typeof rhY !== "number") return;
-    const hipY = ((lhY + rhY) / 2) / 1920;
+    // Coordenadas ya normalizadas a 0-1 desde el worklet.
+    const hipY = (lhY + rhY) / 2;
     if (typeof hipY !== "number" || isNaN(hipY)) return;
 
     const last = lastHipYRef.current;
