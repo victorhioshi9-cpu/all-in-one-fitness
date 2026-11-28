@@ -512,7 +512,15 @@ export const CameraScreen: React.FC = () => {
       {!resting && live.bodyVisible && live.supportsReps && !live.armed && (
         <View style={styles.poseStatus} pointerEvents="none">
           <Text style={styles.poseStatusInfo}>
-            Colócate en la posición inicial y quédate quieto para empezar
+            Colócate en la posición inicial y quédate quieto un instante · ángulo {Math.round(live.angle)}°
+          </Text>
+        </View>
+      )}
+      {/* Lectura en vivo: te dice a qué ángulo hay que llegar para que cuente la rep */}
+      {!resting && !goalReached && live.bodyVisible && live.supportsReps && live.armed && (
+        <View style={styles.poseStatus} pointerEvents="none">
+          <Text style={styles.poseStatusInfo}>
+            Ángulo {Math.round(live.angle)}° · cuenta al bajar de {Math.round(live.countAtDeg)}°
           </Text>
         </View>
       )}

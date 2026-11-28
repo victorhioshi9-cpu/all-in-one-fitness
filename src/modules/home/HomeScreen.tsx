@@ -15,7 +15,8 @@ import { todayISO } from "@/modules/intelligence/dateUtils";
 import { computeReadiness, type ReadinessResult } from "@/modules/intelligence/readiness";
 import { readStepsForDay } from "@/modules/health/readers/stepsReader";
 import { readSleepForDay } from "@/modules/health/readers/sleepReader";
-import { ROUTINES_BY_DAY, estimateRoutineMinutes, type Routine } from "@/modules/entrenos/routineLibrary";
+import { estimateRoutineMinutes, type Routine } from "@/modules/entrenos/routineLibrary";
+import { useTrainingProfile, routineForDay } from "@/modules/entrenos/personalization";
 import { getExerciseMuscles, viewForMuscles, MUSCLE_LABEL, type MuscleId } from "@/modules/muscles/muscles";
 import { BodyMap } from "@/modules/muscles/BodyMap";
 import { MuscleRecoveryCard } from "@/modules/muscles/MuscleRecoveryCard";
@@ -59,7 +60,11 @@ export const HomeScreen: React.FC = () => {
   const [readiness, setReadiness] = useState<ReadinessResult | null>(null);
   const [streak, setStreak] = useState(0);
 
-  const todayRoutine: Routine | undefined = ROUTINES_BY_DAY[limaDayName()];
+  const trainingProfile = useTrainingProfile();
+  const todayRoutine: Routine | undefined = React.useMemo(
+    () => routineForDay(limaDayName(), trainingProfile),
+    [trainingProfile]
+  );
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -144,7 +149,7 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.overline}>HOY TOCA · {limaDayName().toUpperCase()}</Text>
             <Text style={styles.routineName}>{todayRoutine.name}</Text>
             <Text style={styles.routineMeta}>
-              {todayRoutine.focus} · {estimateRoutineMinutes(todayRoutine)} min · {todayRoutine.blocks.length} ejercicios
+              {todayRoutine.focus} · {estimateRoutineMinutes(todayRoutine)} min · {todayRoutine.blocks.length} ejercicios · {todayRoutine.difficulty}
             </Text>
             {routineMuscles.length > 0 && (
               <Text style={styles.routineMuscles} numberOfLines={2}>

@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { colors, spacing, radius } from "@/theme/colors";
 import { useNavigation } from "@react-navigation/native";
+import { suggestExperience } from "./trainingProfile";
 import {
   useSettingsStore, computeTargets,
   type Gender, type Goal, type ActivityLevel, type Experience
@@ -59,7 +60,7 @@ export const ProfileScreen: React.FC = () => {
   const [draftWeight, setDraftWeight] = useState<number>(store.weightKg ?? 70);
   const [draftActivity, setDraftActivity] = useState<ActivityLevel | null>(store.activityLevel);
   const [draftGoal, setDraftGoal] = useState<Goal | null>(store.goal);
-  const [draftExperience, setDraftExperience] = useState<Experience>(store.experience ?? "intermediate");
+  const [draftExperience, setDraftExperience] = useState<Experience>(store.experience ?? suggestExperience(store.weightKg, store.heightCm));
   // % grasa manual (opcional): null = sin dato, se usa el de la báscula si existe.
   const [draftBodyFat, setDraftBodyFat] = useState<number | null>(store.bodyFatManualPct ?? null);
 
@@ -79,7 +80,7 @@ export const ProfileScreen: React.FC = () => {
     setDraftWeight(store.weightKg ?? 70);
     setDraftActivity(store.activityLevel);
     setDraftGoal(store.goal);
-    setDraftExperience(store.experience ?? "intermediate");
+    setDraftExperience(store.experience ?? suggestExperience(store.weightKg, store.heightCm));
     setDraftBodyFat(store.bodyFatManualPct ?? null);
     setEditing(true);
   };

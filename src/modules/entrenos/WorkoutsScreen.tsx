@@ -25,6 +25,7 @@ import { PlateCalculator } from "./PlateCalculator";
 import { HIITTimer, RestTimer } from "./HIITTimer";
 import { MuscleHeatMap, PostWorkoutSummary } from "./PostWorkoutSummary";
 import { MuscleRecoveryCard } from "@/modules/muscles/MuscleRecoveryCard";
+import { useTrainingProfile, routineForDay, adaptedRoutines } from "./personalization";
 import { computeDoubleProgression, suggestDeload } from "./doubleProgression";
 import {
   ROUTINES, ROUTINES_BY_DAY, DAYS_OF_WEEK, estimateRoutineMinutes,
@@ -112,9 +113,12 @@ export const WorkoutsScreen: React.FC = () => {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Rutinas ADAPTADAS al perfil (IMC/%grasa/experiencia): sin saltos si hay obesidad, etc.
+  const trainingProfile = useTrainingProfile();
+  const myRoutines = useMemo(() => adaptedRoutines(trainingProfile), [trainingProfile]);
   const routineForSelectedDay = useMemo<Routine | undefined>(
-    () => ROUTINES_BY_DAY[selectedDay as keyof typeof ROUTINES_BY_DAY],
-    [selectedDay]
+    () => routineForDay(selectedDay as any, trainingProfile),
+    [selectedDay, trainingProfile]
   );
 
   return (
@@ -190,13 +194,21 @@ export const WorkoutsScreen: React.FC = () => {
       )}
 
       {/* === Rutinas sugeridas (scroll horizontal) === */}
+      {trainingProfile.note && (
+        <View style={{ backgroundColor: colors.accentDim, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md }}>
+          <Text style={{ color: colors.accent, fontWeight: "800", fontSize: 12, marginBottom: 2 }}>
+            ADAPTADO A TU PERFIL · {trainingProfile.tierLabel.toUpperCase()}
+          </Text>
+          <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>{trainingProfile.note}</Text>
+        </View>
+      )}
       <Text style={styles.sectionTitle}>Rutinas sugeridas</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingRight: spacing.lg, gap: spacing.md, paddingBottom: spacing.sm }}
       >
-        {ROUTINES.map((r) => (
+        {myRoutines.map((r) => (
           <Pressable
             key={r.id}
             style={styles.routineCardH}
